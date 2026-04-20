@@ -35,6 +35,8 @@ async def test_detect_and_notify_box_lottery(httpx_mock, db):
         parser=lottery_list,
     )
     now = datetime(2026, 4, 20, 12)
+    # 初回スクレイプ時の過去ニュース洪水防止フックを迂回するため、健康履歴を先に注入
+    await health_repo.record_success(monitor.id, now - timedelta(minutes=5), nonzero=False)
     sink = make_sink(event_repo, health_repo, now_fn=lambda: now)
     items = await monitor.fetch()
     await sink(monitor.id, items, True)
@@ -77,6 +79,9 @@ async def test_duplicate_source_becomes_aggregation(httpx_mock, db):
     monitor2 = HtmlMonitor("bic_lottery", "https://example.invalid/2", 60, bic_parser)
 
     now = datetime(2026, 4, 20, 12)
+    # 初回洪水防止フックの迂回
+    await health_repo.record_success(monitor1.id, now - timedelta(minutes=5), nonzero=False)
+    await health_repo.record_success(monitor2.id, now - timedelta(minutes=5), nonzero=False)
     sink = make_sink(event_repo, health_repo, now_fn=lambda: now)
     await sink(monitor1.id, await monitor1.fetch(), True)
     worker = NotifyWorker(event_repo, notifier, aggregator=aggregator)

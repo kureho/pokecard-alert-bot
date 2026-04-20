@@ -27,14 +27,17 @@ class EventRepo:
     def pool(self):
         return self._db.pool
 
-    async def insert_if_new(self, ev: Event) -> bool:
-        """新規なら True を返す。重複なら False。"""
+    async def insert_if_new(self, ev: Event, *, notified_at: datetime | None = None) -> bool:
+        """新規なら True を返す。重複なら False。
+
+        notified_at を指定すると通知済みとして挿入する（初回スクレイプ時の過去ニュース大量送信防止）。
+        """
         async with self._db.pool.acquire() as conn:
             status = await conn.execute(
                 """INSERT INTO events (id, source, kind, product_name, product_raw,
                        normalized_key, url, detected_at, source_ts, price_yen,
                        lottery_deadline, priority, extra_json, notified_at)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NULL)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
                    ON CONFLICT (id) DO NOTHING""",
                 ev.id,
                 ev.source,
@@ -49,6 +52,7 @@ class EventRepo:
                 ev.lottery_deadline,
                 int(ev.priority),
                 json.dumps(ev.extra, ensure_ascii=False),
+                notified_at,
             )
             # asyncpg は "INSERT 0 1" / "INSERT 0 0" を返す
             return status.endswith(" 1")
