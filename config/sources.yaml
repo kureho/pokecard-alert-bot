@@ -1,0 +1,8 @@
+# 監視対象ソースの宣言的定義
+sources:
+  - id: pokeca_sokuhou_rss
+    kind: feed
+    url: https://example.invalid/feed
+    interval_sec: 180
+    parser: pokeca_sokuhou.feed
+    enabled: false
