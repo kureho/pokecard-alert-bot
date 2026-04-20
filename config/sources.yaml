@@ -1,8 +1,21 @@
-# 監視対象ソースの宣言的定義
 sources:
+  - id: yodobashi_lottery
+    kind: html
+    # 実URLは MVP 稼働開始後に確認・差し替え。ヨドバシの抽選販売一覧ページ。
+    url: https://www.yodobashi.com/ec/special/other/54666/
+    interval_sec: 120
+    parser: yodobashi.lottery_list
+    enabled: true
+  - id: pokemon_card_news
+    kind: html
+    url: https://www.pokemon-card.com/info/
+    interval_sec: 600
+    parser: pokemon_card_news.news_list
+    enabled: true
   - id: pokeca_sokuhou_rss
     kind: feed
-    url: https://example.invalid/feed
+    # 実URLは RSS 提供元確認後に差し替え。
+    url: https://pokeca-sokuhou.example/feed
     interval_sec: 180
     parser: pokeca_sokuhou.feed
     enabled: false
