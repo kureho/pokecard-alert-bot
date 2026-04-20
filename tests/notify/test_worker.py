@@ -57,6 +57,21 @@ async def test_retries_on_failure(db):
 
 
 @pytest.mark.asyncio
+async def test_silently_acks_non_notify_kinds(db):
+    """ANNOUNCEMENT / NEW_PRODUCT は LINE 送信せず DB 通知済みマークのみ。"""
+    repo = EventRepo(db)
+    notifier = FakeNotifier()
+    for kind in (EventKind.ANNOUNCEMENT, EventKind.NEW_PRODUCT):
+        await repo.insert_if_new(
+            _ev(kind=kind, normalized_key=f"k-{kind.value}", url=f"https://ex/{kind.value}")
+        )
+    worker = NotifyWorker(repo, notifier)
+    await worker.tick(now=datetime(2026, 4, 20, 12, 1))
+    assert notifier.sent == []
+    assert await repo.pending_notifications() == []
+
+
+@pytest.mark.asyncio
 async def test_gives_up_after_24h(db):
     repo = EventRepo(db)
 

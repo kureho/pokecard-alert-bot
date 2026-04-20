@@ -8,10 +8,12 @@ sources:
     enabled: false
   - id: pokemon_card_news
     kind: html
+    # 2026-04-20: 一般ニュース（大会告知/イベント）が多く BOX 抽選情報に直結しない。
+    # Phase 2 で kind/keyword フィルタ精緻化後に再有効化。
     url: https://www.pokemon-card.com/info/
     interval_sec: 600
     parser: pokemon_card_news.news_list
-    enabled: true
+    enabled: false
   - id: pokeca_sokuhou_rss
     kind: feed
     # 実URLは RSS 提供元確認後に差し替え。

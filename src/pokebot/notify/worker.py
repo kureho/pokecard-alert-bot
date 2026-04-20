@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_exponential
 
+from ..models import EventKind
 from ..storage.repo import EventRepo
 from .aggregation import AggregationBuffer
 from .formatter import format_aggregation, format_event
@@ -14,6 +15,17 @@ from .line import Notifier
 log = logging.getLogger(__name__)
 
 GIVEUP_AFTER = timedelta(hours=24)
+
+# LINE に push 対象とする kind のホワイトリスト。
+# ANNOUNCEMENT / NEW_PRODUCT は DB には記録するが通知しない（ノイズ防止）。
+NOTIFY_KINDS: frozenset[EventKind] = frozenset(
+    {
+        EventKind.LOTTERY_OPEN,
+        EventKind.LOTTERY_CLOSE,
+        EventKind.RESTOCK,
+        EventKind.LOTTERY_RESULT,
+    }
+)
 
 
 class NotifyWorker:
@@ -30,6 +42,10 @@ class NotifyWorker:
     async def tick(self, *, now: datetime) -> None:
         # 1. 各 pending を処理
         for ev in await self._repo.pending_notifications():
+            if ev.kind not in NOTIFY_KINDS:
+                # kind allowlist 外は silent ack（DB に記録のみ）
+                await self._repo.mark_notified(ev.id, now)
+                continue
             if now - ev.detected_at > GIVEUP_AFTER:
                 await self._mark_giveup(ev.id)
                 log.warning("notify giveup: %s", ev.id)

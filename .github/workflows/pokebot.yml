@@ -1,8 +1,9 @@
 name: pokebot
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
+  # 2026-04-20: 通知フィルタ整備中。再開時に schedule を復活させる。
+  # schedule:
+  #   - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
 concurrency:
