@@ -16,15 +16,20 @@ def _classify(title: str) -> str:
     return "announcement"
 
 
-# NOTE: CSS selectors match synthetic test fixture.
-# Adjust after first live fetch of the real news listing page.
 async def news_list(html: str) -> list[RawItem]:
     soup = BeautifulSoup(html, "html.parser")
     items: list[RawItem] = []
-    for a in soup.select("li.news-item a[href]"):
-        title = a.get_text(strip=True)
-        href = a["href"]
+    for a in soup.select("li.List_item a.List_item_inner[href]"):
+        href = a.get("href") or ""
+        img = a.select_one(".List_title img[alt]")
+        title = (img.get("alt") or "").strip() if img else ""
         if not title:
+            body = a.select_one(".List_body")
+            if body:
+                for el in body.select(".Calendar_Label, .Date"):
+                    el.extract()
+                title = body.get_text(strip=True)
+        if not title or not href:
             continue
         items.append(
             RawItem(

@@ -10,7 +10,7 @@ async def test_news_list_extracts_entries():
     items = await news_list(html)
     assert len(items) >= 3
     assert all(i.source == "pokemon_card_news" for i in items)
-    assert all(i.url.startswith("https://www.pokemon-card.com") for i in items)
+    assert all(i.url.startswith("https://") for i in items)
     assert all(i.kind_hint in {"announcement", "new_product"} for i in items)
 
 

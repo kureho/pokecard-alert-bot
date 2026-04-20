@@ -1,11 +1,11 @@
 sources:
   - id: yodobashi_lottery
     kind: html
-    # 実URLは MVP 稼働開始後に確認・差し替え。ヨドバシの抽選販売一覧ページ。
+    # 2026-04-20: UA/IP ベースの 403 Forbidden。Phase 2 で Playwright 経由に変更予定。
     url: https://www.yodobashi.com/ec/special/other/54666/
     interval_sec: 120
     parser: yodobashi.lottery_list
-    enabled: true
+    enabled: false
   - id: pokemon_card_news
     kind: html
     url: https://www.pokemon-card.com/info/
