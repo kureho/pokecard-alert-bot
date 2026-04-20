@@ -13,9 +13,7 @@ class AggregationBuffer:
     def __init__(self, repo: EventRepo) -> None:
         self._repo = repo
 
-    async def classify(
-        self, ev: Event, *, now: datetime
-    ) -> Literal["send_now", "buffer"]:
+    async def classify(self, ev: Event, *, now: datetime) -> Literal["send_now", "buffer"]:
         async with self._repo.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """SELECT 1 FROM events
@@ -49,9 +47,7 @@ class AggregationBuffer:
                 return {}
             keys = {r["normalized_key"] for r in rows}
             event_ids = [r["event_id"] for r in rows]
-            ev_rows = await conn.fetch(
-                "SELECT * FROM events WHERE id = ANY($1::text[])", event_ids
-            )
+            ev_rows = await conn.fetch("SELECT * FROM events WHERE id = ANY($1::text[])", event_ids)
             await conn.execute(
                 "DELETE FROM pending_aggregations WHERE event_id = ANY($1::text[])",
                 event_ids,

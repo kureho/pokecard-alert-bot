@@ -7,12 +7,14 @@ from pokebot.monitors.types import RawItem
 
 async def _dummy_parser(html: str):
     assert "<html" in html.lower()
-    return [RawItem(
-        source="yodobashi",
-        raw_title="【抽選】テラスタルフェスex BOX",
-        url="https://www.yodobashi.com/product/1",
-        kind_hint="lottery_open",
-    )]
+    return [
+        RawItem(
+            source="yodobashi",
+            raw_title="【抽選】テラスタルフェスex BOX",
+            url="https://www.yodobashi.com/product/1",
+            kind_hint="lottery_open",
+        )
+    ]
 
 
 @pytest.mark.asyncio

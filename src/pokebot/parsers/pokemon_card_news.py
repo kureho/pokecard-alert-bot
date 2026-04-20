@@ -26,10 +26,12 @@ async def news_list(html: str) -> list[RawItem]:
         href = a["href"]
         if not title:
             continue
-        items.append(RawItem(
-            source="pokemon_card_news",
-            raw_title=title,
-            url=urljoin(BASE, href),
-            kind_hint=_classify(title),
-        ))
+        items.append(
+            RawItem(
+                source="pokemon_card_news",
+                raw_title=title,
+                url=urljoin(BASE, href),
+                kind_hint=_classify(title),
+            )
+        )
     return items

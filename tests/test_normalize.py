@@ -1,19 +1,30 @@
 from datetime import date
 
 import pytest
-from pokebot.normalize import normalize_title, NormalizedProduct
+from pokebot.normalize import normalize_title
 
 
-@pytest.mark.parametrize("raw,expected_name,expected_category", [
-    ("ポケモンカードゲーム 拡張パック「テラスタルフェスex」BOX",
-     "テラスタルフェスex", "拡張パック"),
-    ("【抽選販売】拡張パック　テラスタルフェスex　ボックス",
-     "テラスタルフェスex", "拡張パック"),
-    ("強化拡張パック ポケモンカード151 Box",
-     "ポケモンカード151", "強化拡張パック"),
-    ("ハイクラスパック シャイニートレジャーex BOX",
-     "シャイニートレジャーex", "ハイクラスパック"),
-])
+@pytest.mark.parametrize(
+    "raw,expected_name,expected_category",
+    [
+        (
+            "ポケモンカードゲーム 拡張パック「テラスタルフェスex」BOX",
+            "テラスタルフェスex",
+            "拡張パック",
+        ),
+        (
+            "【抽選販売】拡張パック　テラスタルフェスex　ボックス",
+            "テラスタルフェスex",
+            "拡張パック",
+        ),
+        ("強化拡張パック ポケモンカード151 Box", "ポケモンカード151", "強化拡張パック"),
+        (
+            "ハイクラスパック シャイニートレジャーex BOX",
+            "シャイニートレジャーex",
+            "ハイクラスパック",
+        ),
+    ],
+)
 def test_normalize_extracts_name_and_category(raw, expected_name, expected_category):
     n = normalize_title(raw)
     assert n.product_name == expected_name

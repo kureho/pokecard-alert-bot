@@ -8,10 +8,14 @@ from pokebot.storage.repo import EventRepo
 
 def _ev(key: str, url: str) -> Event:
     return Event(
-        source="yodobashi", kind=EventKind.LOTTERY_OPEN,
-        product_name="x", product_raw="x",
-        normalized_key=key, url=url,
-        detected_at=datetime(2026, 4, 20, 12), priority=Priority.CRITICAL,
+        source="yodobashi",
+        kind=EventKind.LOTTERY_OPEN,
+        product_name="x",
+        product_raw="x",
+        normalized_key=key,
+        url=url,
+        detected_at=datetime(2026, 4, 20, 12),
+        priority=Priority.CRITICAL,
     )
 
 
@@ -45,7 +49,8 @@ async def test_prune_keeps_unnotified_even_if_old(db):
     async with repo.pool.acquire() as conn:
         await conn.execute(
             "UPDATE events SET detected_at = $1 WHERE id = $2",
-            now - timedelta(days=200), old_unnotified.id,
+            now - timedelta(days=200),
+            old_unnotified.id,
         )
     deleted = await prune_old_events(repo, now=now)
     assert deleted == 0

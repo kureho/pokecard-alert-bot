@@ -30,11 +30,13 @@ async def feed(parsed: feedparser.FeedParserDict) -> list[RawItem]:
         ts = None
         if getattr(entry, "published_parsed", None):
             ts = datetime.fromtimestamp(mktime(entry.published_parsed))
-        items.append(RawItem(
-            source="pokeca_sokuhou",
-            raw_title=title,
-            url=link,
-            kind_hint=_classify(title),
-            source_ts=ts,
-        ))
+        items.append(
+            RawItem(
+                source="pokeca_sokuhou",
+                raw_title=title,
+                url=link,
+                kind_hint=_classify(title),
+                source_ts=ts,
+            )
+        )
     return items

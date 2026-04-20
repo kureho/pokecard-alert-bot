@@ -60,6 +60,7 @@ async def test_duplicate_source_becomes_aggregation(httpx_mock, db):
         rewritten = []
         for i in items:
             from pokebot.monitors.types import RawItem
+
             rewritten.append(
                 RawItem(
                     source="bic",

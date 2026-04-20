@@ -69,9 +69,7 @@ async def test_gives_up_after_24h(db):
     worker = NotifyWorker(repo, AlwaysFail())
     await worker.tick(now=datetime(2026, 4, 20, 12, 2))
     async with db.pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT extra_json, notified_at FROM events WHERE id = $1", ev.id
-        )
+        row = await conn.fetchrow("SELECT extra_json, notified_at FROM events WHERE id = $1", ev.id)
     assert row is not None
     extra = json.loads(row["extra_json"]) if row["extra_json"] else {}
     assert extra.get("notify_giveup") is True

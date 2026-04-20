@@ -24,12 +24,18 @@ async def test_daily_report_counts_events_and_failures(repos):
     event_repo, health_repo = repos
     now = datetime(2026, 4, 20, 9, 0)
     for i in range(3):
-        await event_repo.insert_if_new(Event(
-            source="yodobashi", kind=EventKind.LOTTERY_OPEN,
-            product_name=f"p{i}", product_raw=f"p{i}",
-            normalized_key=f"k{i}", url=f"https://ex.com/{i}",
-            detected_at=now - timedelta(hours=1), priority=Priority.CRITICAL,
-        ))
+        await event_repo.insert_if_new(
+            Event(
+                source="yodobashi",
+                kind=EventKind.LOTTERY_OPEN,
+                product_name=f"p{i}",
+                product_raw=f"p{i}",
+                normalized_key=f"k{i}",
+                url=f"https://ex.com/{i}",
+                detected_at=now - timedelta(hours=1),
+                priority=Priority.CRITICAL,
+            )
+        )
     await health_repo.record_failure("bic", now - timedelta(minutes=5), "boom")
     notifier = FakeNotifier()
     job = DailyReportJob(event_repo, health_repo, notifier, hhmm="09:00")

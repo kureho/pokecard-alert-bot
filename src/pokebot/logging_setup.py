@@ -10,9 +10,7 @@ from typing import IO
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict = {
-            "ts": datetime.fromtimestamp(record.created, tz=UTC)
-            .isoformat()
-            .replace("+00:00", "Z"),
+            "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat().replace("+00:00", "Z"),
             "level": record.levelname,
             "logger": record.name,
             "msg": record.getMessage(),

@@ -17,17 +17,18 @@ def test_lottery_open_wins_over_restock():
 
 
 def test_box_lottery_gets_critical_priority():
-    item = RawItem(source="yodobashi",
-                   raw_title="【抽選】拡張パック テラスタルフェスex BOX",
-                   url="https://x", kind_hint="lottery_open")
+    item = RawItem(
+        source="yodobashi",
+        raw_title="【抽選】拡張パック テラスタルフェスex BOX",
+        url="https://x",
+        kind_hint="lottery_open",
+    )
     ev = to_event(item, now=datetime(2026, 4, 20))
     assert ev.priority == Priority.CRITICAL
 
 
 def test_non_box_announcement_gets_info_priority():
-    item = RawItem(source="news",
-                   raw_title="新弾発表",
-                   url="https://x", kind_hint="announcement")
+    item = RawItem(source="news", raw_title="新弾発表", url="https://x", kind_hint="announcement")
     ev = to_event(item, now=datetime(2026, 4, 20))
     assert ev.priority == Priority.INFO
 

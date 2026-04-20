@@ -22,10 +22,12 @@ async def lottery_list(html: str) -> list[RawItem]:
         href = a.get("href") or ""
         if not title or not href:
             continue
-        items.append(RawItem(
-            source="yodobashi",
-            raw_title=title,
-            url=urljoin(BASE, href),
-            kind_hint="lottery_open",
-        ))
+        items.append(
+            RawItem(
+                source="yodobashi",
+                raw_title=title,
+                url=urljoin(BASE, href),
+                kind_hint="lottery_open",
+            )
+        )
     return items

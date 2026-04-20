@@ -8,12 +8,14 @@ from pokebot.monitors.types import RawItem
 async def _parser(feed):
     out = []
     for e in feed.entries[:3]:
-        out.append(RawItem(
-            source="pokeca_sokuhou",
-            raw_title=e.title,
-            url=e.link,
-            kind_hint="announcement",
-        ))
+        out.append(
+            RawItem(
+                source="pokeca_sokuhou",
+                raw_title=e.title,
+                url=e.link,
+                kind_hint="announcement",
+            )
+        )
     return out
 
 

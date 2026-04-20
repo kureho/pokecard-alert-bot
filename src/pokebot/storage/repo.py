@@ -62,9 +62,7 @@ class EventRepo:
 
     async def mark_notified(self, event_id: str, at: datetime) -> None:
         async with self._db.pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE events SET notified_at = $1 WHERE id = $2", at, event_id
-            )
+            await conn.execute("UPDATE events SET notified_at = $1 WHERE id = $2", at, event_id)
 
     @staticmethod
     def _row_to_event(r) -> Event:
@@ -130,9 +128,7 @@ class SourceHealthRepo:
 
     async def get(self, source: str) -> SourceHealth | None:
         async with self._db.pool.acquire() as conn:
-            r = await conn.fetchrow(
-                "SELECT * FROM source_health WHERE source = $1", source
-            )
+            r = await conn.fetchrow("SELECT * FROM source_health WHERE source = $1", source)
         if not r:
             return None
         return SourceHealth(
@@ -152,5 +148,6 @@ class SourceHealthRepo:
                    VALUES ($1, $2, 0)
                    ON CONFLICT (source) DO UPDATE SET
                        last_warned_at = EXCLUDED.last_warned_at""",
-                source, at,
+                source,
+                at,
             )

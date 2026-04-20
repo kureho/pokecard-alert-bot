@@ -66,9 +66,7 @@ class NotifyWorker:
 
     async def _mark_giveup(self, event_id: str) -> None:
         async with self._repo.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT extra_json FROM events WHERE id = $1", event_id
-            )
+            row = await conn.fetchrow("SELECT extra_json FROM events WHERE id = $1", event_id)
             extra = json.loads(row["extra_json"]) if row and row["extra_json"] else {}
             extra["notify_giveup"] = True
             await conn.execute(
