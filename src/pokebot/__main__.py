@@ -78,7 +78,9 @@ async def run_once() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+    from .logging_setup import setup_logging
+
+    setup_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
     asyncio.run(run_once())
 
 
