@@ -72,6 +72,43 @@ async def test_silently_acks_non_notify_kinds(db):
 
 
 @pytest.mark.asyncio
+async def test_max_per_run_caps_sends(db):
+    """max_per_run を超えたら残りは pending のまま残す。"""
+    repo = EventRepo(db)
+    notifier = FakeNotifier()
+    for i in range(5):
+        await repo.insert_if_new(
+            _ev(normalized_key=f"k{i}", url=f"https://ex.com/{i}")
+        )
+    worker = NotifyWorker(repo, notifier, max_per_run=2)
+    await worker.tick(now=datetime(2026, 4, 20, 12, 1))
+    assert len(notifier.sent) == 2
+    assert len(await repo.pending_notifications()) == 3
+
+
+@pytest.mark.asyncio
+async def test_max_per_day_caps_sends(db):
+    """24h以内の通知実績＋今回送信合計が max_per_day を超えたら抑止。"""
+    from datetime import timedelta as _td
+    repo = EventRepo(db)
+    notifier = FakeNotifier()
+    # 24h以内に3件送信済みを仕込む
+    for i in range(3):
+        ev = _ev(normalized_key=f"past{i}", url=f"https://past/{i}")
+        await repo.insert_if_new(ev)
+        await repo.mark_notified(ev.id, datetime(2026, 4, 20, 10) - _td(hours=i))
+    # 新規 pending を5件
+    for i in range(5):
+        await repo.insert_if_new(
+            _ev(normalized_key=f"new{i}", url=f"https://new/{i}")
+        )
+    worker = NotifyWorker(repo, notifier, max_per_day=5)
+    await worker.tick(now=datetime(2026, 4, 20, 12))
+    # 既に3件24h以内にある → 残り2件のみ送信可能
+    assert len(notifier.sent) == 2
+
+
+@pytest.mark.asyncio
 async def test_gives_up_after_24h(db):
     repo = EventRepo(db)
 

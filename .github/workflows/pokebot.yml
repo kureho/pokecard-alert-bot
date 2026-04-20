@@ -4,7 +4,16 @@ on:
   # 2026-04-20: 通知フィルタ整備中。再開時に schedule を復活させる。
   # schedule:
   #   - cron: "*/5 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "DRY_RUN: LINE 送信を抑止してログだけ出す"
+        type: boolean
+        default: true
+      max_per_run:
+        description: "1回の実行で送る最大通知数 (デフォルト 10)"
+        type: string
+        default: "10"
 
 concurrency:
   group: pokebot
@@ -28,4 +37,6 @@ jobs:
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           LOG_LEVEL: INFO
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          MAX_NOTIFY_PER_RUN: ${{ inputs.max_per_run }}
         run: python -m pokebot

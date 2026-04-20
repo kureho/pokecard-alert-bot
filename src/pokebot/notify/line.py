@@ -37,3 +37,15 @@ class LineNotifier:
                     messages=[TextMessage(text=text)],
                 )
             )
+
+
+class DryRunNotifier:
+    """DRY_RUN=1 で有効化。LINE に送らずログに出すだけ。"""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    async def send(self, text: str) -> None:
+        self.sent.append(text)
+        preview = text.replace("\n", " / ")[:120]
+        log.info("[DRY_RUN] would-send (#%d): %s", len(self.sent), preview)

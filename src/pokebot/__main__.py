@@ -12,7 +12,7 @@ from .config import load_sources
 from .health import DailyReportJob, SilenceDetector
 from .monitors.base import Monitor
 from .notify.aggregation import AggregationBuffer
-from .notify.line import LineNotifier
+from .notify.line import DryRunNotifier, LineNotifier, Notifier
 from .notify.worker import NotifyWorker
 from .retention import prune_old_events
 from .sink import make_sink
@@ -20,6 +20,34 @@ from .storage.db import Database
 from .storage.repo import EventRepo, SourceHealthRepo
 
 log = logging.getLogger("pokebot")
+
+DEFAULT_MAX_PER_RUN = 10
+DEFAULT_MAX_PER_DAY = 150  # LINE 無料枠 200/月に対して安全バッファ
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        log.warning("invalid %s=%r, falling back to %d", name, raw, default)
+        return default
+
+
+def _is_dry_run() -> bool:
+    return os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
+
+
+def _make_notifier() -> Notifier:
+    if _is_dry_run():
+        log.warning("DRY_RUN mode: LINE 実送信を抑止してログのみ出力")
+        return DryRunNotifier()
+    return LineNotifier(
+        token=os.environ["LINE_CHANNEL_ACCESS_TOKEN"],
+        user_id=os.environ["LINE_USER_ID"],
+    )
 
 
 async def _fetch_monitor(monitor: Monitor, sink) -> None:
@@ -39,10 +67,7 @@ async def run_once() -> None:
     try:
         event_repo = EventRepo(db)
         health_repo = SourceHealthRepo(db)
-        notifier = LineNotifier(
-            token=os.environ["LINE_CHANNEL_ACCESS_TOKEN"],
-            user_id=os.environ["LINE_USER_ID"],
-        )
+        notifier = _make_notifier()
         sources_path = Path(os.environ.get("SOURCES_YAML", "config/sources.yaml"))
         monitors = load_sources(sources_path)
 
@@ -55,7 +80,15 @@ async def run_once() -> None:
         )
 
         aggregator = AggregationBuffer(event_repo)
-        worker = NotifyWorker(event_repo, notifier, aggregator=aggregator)
+        max_per_run = _env_int("MAX_NOTIFY_PER_RUN", DEFAULT_MAX_PER_RUN)
+        max_per_day = _env_int("MAX_NOTIFY_PER_DAY", DEFAULT_MAX_PER_DAY)
+        worker = NotifyWorker(
+            event_repo,
+            notifier,
+            aggregator=aggregator,
+            max_per_run=max_per_run,
+            max_per_day=max_per_day,
+        )
         now = datetime.now()
         await worker.tick(now=now)
 
