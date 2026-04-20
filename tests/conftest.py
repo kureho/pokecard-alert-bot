@@ -13,8 +13,8 @@ async def db():
     await d.init()
     async with d.pool.acquire() as conn:
         await conn.execute(
-            "TRUNCATE events, product_aliases, source_health, pending_aggregations "
-            "RESTART IDENTITY CASCADE;"
+            "TRUNCATE events, product_aliases, source_health, pending_aggregations, "
+            "daily_reports RESTART IDENTITY CASCADE;"
         )
     yield d
     await d.close()

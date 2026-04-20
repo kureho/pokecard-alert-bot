@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS source_health (
     last_attempt_at           TIMESTAMP,
     last_nonzero_detection_at TIMESTAMP,
     consecutive_failures      INTEGER NOT NULL DEFAULT 0,
-    last_error                TEXT
+    last_error                TEXT,
+    last_warned_at            TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS pending_aggregations (
@@ -42,5 +43,10 @@ CREATE TABLE IF NOT EXISTS pending_aggregations (
     event_id        TEXT NOT NULL,
     scheduled_at    TIMESTAMP NOT NULL,
     PRIMARY KEY (normalized_key, event_id)
+);
+
+CREATE TABLE IF NOT EXISTS daily_reports (
+    date    DATE PRIMARY KEY,
+    sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """

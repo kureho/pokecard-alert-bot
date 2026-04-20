@@ -16,6 +16,7 @@ class SourceHealth:
     last_nonzero_detection_at: datetime | None
     consecutive_failures: int
     last_error: str | None
+    last_warned_at: datetime | None = None
 
 
 class EventRepo:
@@ -141,4 +142,15 @@ class SourceHealthRepo:
             last_nonzero_detection_at=r["last_nonzero_detection_at"],
             consecutive_failures=r["consecutive_failures"],
             last_error=r["last_error"],
+            last_warned_at=r["last_warned_at"],
         )
+
+    async def record_warning(self, source: str, at: datetime) -> None:
+        async with self._db.pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO source_health (source, last_warned_at, consecutive_failures)
+                   VALUES ($1, $2, 0)
+                   ON CONFLICT (source) DO UPDATE SET
+                       last_warned_at = EXCLUDED.last_warned_at""",
+                source, at,
+            )
