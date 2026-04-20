@@ -1,0 +1,19 @@
+sources:
+  - id: yodobashi_lottery
+    kind: html
+    url: https://www.yodobashi.com/x
+    interval_sec: 120
+    parser: yodobashi.lottery_list
+    enabled: true
+  - id: disabled_one
+    kind: html
+    url: https://disabled.invalid/
+    interval_sec: 60
+    parser: yodobashi.lottery_list
+    enabled: false
+  - id: pokeca_sokuhou_rss
+    kind: feed
+    url: https://pokeca-sokuhou.example/feed
+    interval_sec: 180
+    parser: pokeca_sokuhou.feed
+    enabled: true
