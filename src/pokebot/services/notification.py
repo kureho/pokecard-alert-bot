@@ -227,8 +227,12 @@ class NotificationDispatcher:
         result = NotificationResult()
         since = now - self._fresh_window
         events = await self._lottery.list_active_since(since, limit=200)
+        log.info(
+            "dispatch: now=%s since=%s candidate_events=%d", now, since, len(events)
+        )
 
         per_day_used = await self._count_sent_today(now)
+        log.info("dispatch: per_day_used=%d max_per_day=%s", per_day_used, self._max_per_day)
 
         sent_this_run = 0
         for ev in events:
