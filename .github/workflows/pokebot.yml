@@ -2,8 +2,10 @@ name: pokebot
 
 on:
   schedule:
-    # 30分間隔。LINE 無料枠 200通/月 ≒ 6.7通/日 を超過しない cap と合わせて運用。
-    - cron: "*/30 * * * *"
+    # Full lane (全 adapter): 0, 30 分。30 分間隔で network 全量スキャン。
+    - cron: "0,30 * * * *"
+    # Fast lane (公式 + 主要販路 entry_page のみ): 15, 45 分。速報性重視。
+    - cron: "15,45 * * * *"
   workflow_dispatch:
     inputs:
       job:
@@ -12,8 +14,10 @@ on:
         default: all
         options:
           - all
+          - fast
           - product-sync
           - lottery-watch
+          - lottery-watch-fast
           - notify-dispatch
           - bootstrap
           - audit
@@ -26,14 +30,18 @@ on:
         type: string
         default: "2"
 
+# Fast と Full は DB 側の ON CONFLICT / dedupe で安全に並列可能だが、
+# 同じ SELECT → INSERT を同時に走らせると UNIQUE 競合で片側失敗するため、
+# group を分けずに queue 実行する (cancel-in-progress=false)。
 concurrency:
   group: pokebot
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    # 12 adapters + body fetch で 8分程度。余裕を持って 12分。
+    # Full lane: 21 adapter + body fetch で 6〜8 分。Fast lane: 7 adapter で 3 分程度。
+    # 余裕を持って 12 分。
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v5
@@ -43,6 +51,20 @@ jobs:
           cache: pip
       - name: Install
         run: pip install -e .
+      - name: Determine job
+        id: job
+        # schedule 実行時は github.event.schedule で cron 式を判定。
+        # - "0,30 * * * *" → all (Full lane)
+        # - "15,45 * * * *" → fast (Fast lane)
+        # workflow_dispatch 時は inputs.job を使う。
+        run: |
+          if [ -n "${{ inputs.job }}" ]; then
+            echo "name=${{ inputs.job }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "15,45 * * * *" ]; then
+            echo "name=fast" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=all" >> "$GITHUB_OUTPUT"
+          fi
       - name: Run pokebot
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
@@ -55,4 +77,4 @@ jobs:
           MAX_NOTIFY_PER_RUN: ${{ inputs.max_per_run || '2' }}
           # LINE 無料枠 200/月 ≒ 6.7/日 の安全圏として 6 に制限。
           MAX_NOTIFY_PER_DAY: "6"
-        run: python -m pokebot ${{ inputs.job || 'all' }}
+        run: python -m pokebot ${{ steps.job.outputs.name }}

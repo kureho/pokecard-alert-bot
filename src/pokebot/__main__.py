@@ -57,6 +57,19 @@ LOTTERY_WATCH_ADAPTERS = [
     "hbst_lottery",
 ]
 
+# Fast lane: 公式 + 主要販路の entry_page/store_notice 系だけを短周期で回す。
+# 速報性 (応募開始検知) を優先し、速報系 Twitter や aggregator は full lane (30分) に任せる。
+# 実行時間は 3〜4 分程度を目安。
+FAST_LANE_ADAPTERS = [
+    "pokemon_official_news",
+    "pokemoncenter_online_lottery",
+    "pokemoncenter_online_guide",
+    "pokemoncenter_store_voice",
+    "rakuten_books_entry",
+    "yamada_lottery",
+    "hbst_lottery",
+]
+
 
 def _is_dry_run() -> bool:
     return os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
@@ -157,7 +170,8 @@ async def _seed_notification_sent(
     )
 
 
-async def job_lottery_watch() -> None:
+async def _run_lottery_watch(adapter_names: list[str]) -> None:
+    """共通化された lottery_watch 実行ロジック。adapter_names で対象を絞る。"""
     load_dotenv()
     dsn = os.environ["DATABASE_URL"]
     db = Database(dsn)
@@ -176,7 +190,7 @@ async def job_lottery_watch() -> None:
         total_new = 0
         total_updated = 0
         total_seeded = 0
-        for name in LOTTERY_WATCH_ADAPTERS:
+        for name in adapter_names:
             # record_success 前に first_run 判定する
             source_before = await source_repo.get_by_name(name)
             is_first_run = source_before is None or source_before.last_success_at is None
@@ -198,13 +212,24 @@ async def job_lottery_watch() -> None:
                 elif out.is_updated:
                     total_updated += 1
         log.info(
-            "lottery_watch complete: new=%d updated=%d first_run_seeded=%d",
+            "lottery_watch complete: adapters=%d new=%d updated=%d first_run_seeded=%d",
+            len(adapter_names),
             total_new,
             total_updated,
             total_seeded,
         )
     finally:
         await db.close()
+
+
+async def job_lottery_watch() -> None:
+    """Full lane: 全 adapter を回す (30分間隔向け)。"""
+    await _run_lottery_watch(LOTTERY_WATCH_ADAPTERS)
+
+
+async def job_lottery_watch_fast() -> None:
+    """Fast lane: 公式 + 主要販路 entry_page だけ (15分間隔向け)。"""
+    await _run_lottery_watch(FAST_LANE_ADAPTERS)
 
 
 async def job_notify_dispatch() -> None:
@@ -284,6 +309,16 @@ async def job_all() -> None:
     """
     await job_product_sync()
     await job_lottery_watch()
+    await job_notify_dispatch()
+
+
+async def job_fast() -> None:
+    """Fast lane cron 向け: lottery_watch_fast → notify_dispatch のみ。
+
+    product_sync は 30分 full cron だけで十分なのでスキップ。速報性を
+    重視し、公式 + 主要販路 entry_page に絞って 15分間隔で回す。
+    """
+    await job_lottery_watch_fast()
     await job_notify_dispatch()
 
 
@@ -460,8 +495,10 @@ def main() -> None:
         default="all",
         choices=[
             "all",
+            "fast",
             "product-sync",
             "lottery-watch",
+            "lottery-watch-fast",
             "notify-dispatch",
             "bootstrap",
             "audit",
@@ -473,8 +510,10 @@ def main() -> None:
 
     job_map = {
         "all": job_all,
+        "fast": job_fast,
         "product-sync": job_product_sync,
         "lottery-watch": job_lottery_watch,
+        "lottery-watch-fast": job_lottery_watch_fast,
         "notify-dispatch": job_notify_dispatch,
         "audit": job_audit,
     }
