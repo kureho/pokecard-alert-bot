@@ -47,6 +47,26 @@ SEED_SOURCES: list[tuple[str, str, str, int]] = [
         "https://pokecawatch.com/category/%E6%8A%BD%E9%81%B8%E3%83%BB%E4%BA%88%E7%B4%84%E6%83%85%E5%A0%B1/feed",
         75,
     ),
+    # Twitter syndication (unauth public profile)。手動キュレーション済の速報性高いソース。
+    # 仕様変更で壊れやすいため trust=80 に抑える。
+    (
+        "twitter_pokecayoyaku",
+        "social",
+        "https://syndication.twitter.com/srv/timeline-profile/screen-name/pokecayoyaku",
+        80,
+    ),
+    (
+        "twitter_pokecamatomeru",
+        "social",
+        "https://syndication.twitter.com/srv/timeline-profile/screen-name/pokecamatomeru",
+        80,
+    ),
+    (
+        "twitter_pokecawatch",
+        "social",
+        "https://syndication.twitter.com/srv/timeline-profile/screen-name/pokecawatch",
+        80,
+    ),
 ]
 
 

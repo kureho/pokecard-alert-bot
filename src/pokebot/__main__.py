@@ -43,6 +43,9 @@ LOTTERY_WATCH_ADAPTERS = [
     "c_labo_blog",
     "amiami_lottery",
     "pokecawatch_chusen",
+    "twitter_pokecayoyaku",
+    "twitter_pokecamatomeru",
+    "twitter_pokecawatch",
 ]
 
 
