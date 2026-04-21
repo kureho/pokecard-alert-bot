@@ -1,19 +1,29 @@
 name: pokebot
 
 on:
-  # 2026-04-20: 通知フィルタ整備中。再開時に schedule を復活させる。
+  # schedule は有効化前に段階検証完了必須
   # schedule:
-  #   - cron: "*/5 * * * *"
+  #   - cron: "*/30 * * * *"  # Phase 1 は30分間隔で開始（量を見て再調整）
   workflow_dispatch:
     inputs:
+      job:
+        description: "実行するjob"
+        type: choice
+        default: all
+        options:
+          - all
+          - product-sync
+          - lottery-watch
+          - notify-dispatch
+          - bootstrap
       dry_run:
-        description: "DRY_RUN: LINE 送信を抑止してログだけ出す"
+        description: "DRY_RUN (LINE送信をログに置換)"
         type: boolean
         default: true
       max_per_run:
-        description: "1回の実行で送る最大通知数 (デフォルト 10)"
+        description: "1回の実行で送る最大通知数"
         type: string
-        default: "10"
+        default: "5"
 
 concurrency:
   group: pokebot
@@ -22,7 +32,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,7 +41,7 @@ jobs:
           cache: pip
       - name: Install
         run: pip install -e .
-      - name: Run pokebot tick
+      - name: Run pokebot
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
@@ -39,4 +49,5 @@ jobs:
           LOG_LEVEL: INFO
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
           MAX_NOTIFY_PER_RUN: ${{ inputs.max_per_run }}
-        run: python -m pokebot
+          MAX_NOTIFY_PER_DAY: "150"
+        run: python -m pokebot ${{ inputs.job || 'all' }}
