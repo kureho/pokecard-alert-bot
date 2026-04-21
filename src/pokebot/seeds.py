@@ -38,7 +38,8 @@ SEED_SOURCES: list[tuple[str, str, str, int]] = [
         "https://www.biccamera.com/bc/i/card/pokemoncard/index.jsp",
         95,
     ),
-    ("c_labo_blog", "retailer_lottery", "https://www.c-labo.jp/blog/", 85),
+    # カードラボは主要 TCG 専門店で店舗ブログに抽選告知を直接掲載。trust=90 で confirmed 対象。
+    ("c_labo_blog", "retailer_lottery", "https://www.c-labo.jp/blog/", 90),
     ("amiami_lottery", "retailer_lottery", "https://www.amiami.com/jp/event/lottery", 85),
     (
         "pokecawatch_chusen",
