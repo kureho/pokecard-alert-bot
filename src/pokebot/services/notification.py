@@ -208,12 +208,17 @@ class NotificationDispatcher:
             result.update_sent += 1
 
     async def _count_sent_today(self, now: datetime) -> int:
+        """per-day cap カウント。seed/silence/daily_summary 等 LINE 内部管理用通知は除外。
+
+        実際にユーザーの LINE に届く new/update/deadline/result のみをカウントする。
+        """
         if self._max_per_day is None:
             return 0
         async with self._lottery.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """SELECT COUNT(*) AS c FROM notifications
-                   WHERE sent_at IS NOT NULL AND sent_at >= $1""",
+                   WHERE sent_at IS NOT NULL AND sent_at >= $1
+                     AND notification_type IN ('new', 'update', 'deadline', 'result')""",
                 now.replace(hour=0, minute=0, second=0, microsecond=0),
             )
         return row["c"] if row else 0

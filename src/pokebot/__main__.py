@@ -126,6 +126,8 @@ async def _seed_notification_sent(
     ただし **sent_at は NULL のまま** にする: per-day cap は sent_at IS NOT NULL を
     カウントするため、seed 分をカウントに含めないことで実送信数だけが cap の対象になる。
     """
+    # dedupe_key は new 通知のものと同一 (UNIQUE 制約で将来の new を suppress)。
+    # ただし notification_type は 'seed' で分離して cap 計算から除外する。
     ndk = build_notification_dedupe_key(
         lottery_dedupe_key=dedupe_key,
         notification_type="new",
@@ -133,7 +135,7 @@ async def _seed_notification_sent(
     )
     await notif_repo.try_claim(
         lottery_event_id=lottery_event_id,
-        notification_type="new",
+        notification_type="seed",
         channel="line",
         dedupe_key=ndk,
         payload_summary="[first-run seed; not sent]",

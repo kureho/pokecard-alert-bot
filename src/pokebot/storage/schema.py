@@ -110,8 +110,12 @@ WHERE status = 'active' AND sales_type = 'unknown';
 -- 既に NULL 許可されている場合は no-op。
 ALTER TABLE notifications ALTER COLUMN lottery_event_id DROP NOT NULL;
 
--- 2026-04-21: first-run seed で sent_at マークされた通知は実送信じゃないので
--- per-day cap から除外するため sent_at を NULL に戻す。冪等。
+-- 2026-04-21: first-run seed の notification_type を 'seed' に分離 (冪等)。
+-- cap 計算は type IN ('new','update','deadline','result') のみを対象にするので、
+-- seed は自動的にカウント外になる。
+UPDATE notifications SET notification_type = 'seed'
+WHERE payload_summary = '[first-run seed; not sent]' AND notification_type <> 'seed';
+-- seed 通知の sent_at も NULL に (実送信ではないため)
 UPDATE notifications SET sent_at = NULL
-WHERE payload_summary = '[first-run seed; not sent]' AND sent_at IS NOT NULL;
+WHERE notification_type = 'seed' AND sent_at IS NOT NULL;
 """
