@@ -31,6 +31,9 @@ def _cand(**kw) -> Candidate:
         apply_start_at=datetime(2026, 5, 10, 14),
         apply_end_at=datetime(2026, 5, 14, 23, 59),
         extracted_payload={"body_fetched": True, "title_category": "lottery_active"},
+        # Dispatch1: evidence 層。pokemon_official_news は official_notice 相当。
+        evidence_type="official_notice",
+        application_url="https://www.pokemon-card.com/info/1",
     )
     base.update(kw)
     return Candidate(**base)
@@ -82,10 +85,11 @@ async def test_official_source_gets_high_confidence(db):
     svc = await _setup(db)
     now = datetime(2026, 4, 21, 12)
     out = await svc.apply(_cand(), now=now)
-    # 公式 (trust=100) + 主要情報揃い → confirmed
+    # Dispatch1: evidence_type=official_notice + 主要情報揃い → confirmed_strong
     ev = await LotteryEventRepo(db).find_by_dedupe_key(out.dedupe_key)
     assert ev.official_confirmation_status == "confirmed"
-    assert ev.confidence_score >= 90
+    assert ev.confidence_level == "confirmed_strong"
+    assert ev.confidence_score >= 85
 
 
 @pytest.mark.asyncio
@@ -171,18 +175,19 @@ async def test_cross_source_corroboration_boosts_confidence(db):
         source_name="twitter_pokecayoyaku",
         source_url="https://twitter.com/x/status/1",
         raw_snapshot="h-twitter",
+        evidence_type="social_post",
+        application_url=None,
     )
     out2 = await svc.apply(c2, now=now)
     assert out2 and out2.is_new
-    # Twitter 側 event の confidence には cross_source_count=1 (公式側 1 ソース) による
-    # +5 ボーナスが乗っている。
+    # Dispatch1: Twitter (social_post) 側の evidence_score:
+    #   base 10 + 10 (apply_start) + 5 (apply_end) + 5 (retailer) + 3 (store)
+    #   + 2 (url) + 5 (sales_type_known) + 5 (cross_source_count=1)
+    #   = 45 → CANDIDATE
     ev2 = await LotteryEventRepo(db).find_by_dedupe_key(out2.dedupe_key)
-    # source_trust=80, body_extracted=True (+5), product_match=False (product_repo 未upsertのため),
-    # apply_start/end +5+5, retailer/store/url +2+2+2, sales_type_known +5
-    # = 80 + 5 + 5 + 5 + 2 + 2 + 2 + 5 = 106 → clamp 100
-    # ただし product_name_ambiguous は len("アビスアイ")>=3 なので no penalty
-    # → +5 (cross_source_count=1) しても 100 を超えるだけ (clamp)。
-    assert ev2.confidence_score == 100
+    assert ev2.confidence_level == "candidate"
+    # cross_source 加点が乗っていることは confidence_score のほうで確認 (social 単独なら 40)
+    assert ev2.confidence_score == 45
 
 
 @pytest.mark.asyncio
@@ -216,3 +221,87 @@ async def test_existing_active_event_is_archived_retroactively(db):
     await svc.apply(old_cand, now=later_now)
     events2 = await LotteryEventRepo(db).list_active(limit=100)
     assert o1.event_id not in {e.id for e in events2}
+
+
+# ===== Dispatch1: evidence 層 =====
+
+
+@pytest.mark.asyncio
+async def test_upsert_sets_confidence_level_confirmed_strong(db):
+    """official_notice + 主要情報揃い → confidence_level=confirmed_strong。"""
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    out = await svc.apply(_cand(), now=now)
+    ev = await LotteryEventRepo(db).find_by_dedupe_key(out.dedupe_key)
+    assert ev.confidence_level == "confirmed_strong"
+    assert ev.official_confirmation_status == "confirmed"
+    assert ev.evidence_score is not None
+    assert ev.evidence_summary and "抽選受付" in ev.evidence_summary or "公式告知" in ev.evidence_summary
+    # evidence 層の URL が保存される
+    assert ev.application_url == "https://www.pokemon-card.com/info/1"
+
+
+@pytest.mark.asyncio
+async def test_upsert_social_post_becomes_candidate_level(db):
+    """Twitter 相当 (social_post) は candidate 止まり。legacy status=unconfirmed。"""
+    await SourceRepo(db).upsert(
+        source_name="twitter_x", source_type="social",
+        base_url="https://y", trust_score=80,
+    )
+    svc = LotteryEventUpsertService(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        source_repo=SourceRepo(db),
+    )
+    c = _cand(
+        source_name="twitter_x",
+        evidence_type="social_post",
+        application_url=None,
+    )
+    out = await svc.apply(c, now=datetime(2026, 4, 21, 12))
+    ev = await LotteryEventRepo(db).find_by_dedupe_key(out.dedupe_key)
+    assert ev.confidence_level == "candidate"
+    assert ev.official_confirmation_status == "unconfirmed"
+
+
+@pytest.mark.asyncio
+async def test_upsert_sale_status_inferred_from_time_axis(db):
+    """now < apply_start_at → sale_status='upcoming'。"""
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    # _cand() の apply_start_at は 2026/5/10 14:00 なので now より未来 = upcoming
+    out = await svc.apply(_cand(), now=now)
+    ev = await LotteryEventRepo(db).find_by_dedupe_key(out.dedupe_key)
+    assert ev.sale_status == "upcoming"
+
+
+@pytest.mark.asyncio
+async def test_upsert_sale_status_accepting_when_inside_window(db):
+    """apply_start_at <= now <= apply_end_at → accepting。"""
+    svc = await _setup(db)
+    during = datetime(2026, 5, 12, 10)  # within apply window
+    out = await svc.apply(_cand(), now=during)
+    ev = await LotteryEventRepo(db).find_by_dedupe_key(out.dedupe_key)
+    assert ev.sale_status == "accepting"
+
+
+@pytest.mark.asyncio
+async def test_upsert_persists_page_fingerprint(db):
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    out = await svc.apply(_cand(), now=now)
+    ev = await LotteryEventRepo(db).find_by_dedupe_key(out.dedupe_key)
+    assert ev.page_fingerprint is not None
+    assert len(ev.page_fingerprint) == 32
+
+
+@pytest.mark.asyncio
+async def test_upsert_default_evidence_type_unknown_is_low(db):
+    """evidence_type 未指定 (default 'unknown') の Candidate は candidate 相当 = 通知対象外。"""
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    # evidence_type を明示的に unknown にセット
+    c = _cand(evidence_type="unknown", application_url=None)
+    out = await svc.apply(c, now=now)
+    ev = await LotteryEventRepo(db).find_by_dedupe_key(out.dedupe_key)
+    assert ev.confidence_level == "candidate"

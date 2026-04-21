@@ -56,6 +56,17 @@ class LotteryEvent:
     first_seen_at: datetime
     last_seen_at: datetime
     product_name_normalized: str | None = None
+    # Dispatch1: evidence 層 (全 nullable / default)。
+    # 既存 active event は全て None/'unknown' のまま、次回 upsert 時に段階的に enrich。
+    application_url: str | None = None
+    product_url: str | None = None
+    entry_method: str = "unknown"
+    sale_status: str = "unknown"
+    page_fingerprint: str | None = None
+    evidence_score: int | None = None
+    evidence_summary: str | None = None
+    retailer_event_id: str | None = None
+    confidence_level: str | None = None
 
 
 class ProductRepo:
@@ -241,7 +252,9 @@ class LotteryEventRepo:
         """Fields: product_id, retailer_name, store_name, canonical_title, sales_type,
         apply_start_at, apply_end_at, result_at, purchase_start_at, purchase_end_at,
         purchase_limit_text, conditions_text, source_primary_url, official_confirmation_status,
-        confidence_score, dedupe_key, status, product_name_normalized"""
+        confidence_score, dedupe_key, status, product_name_normalized,
+        application_url, product_url, entry_method, sale_status, page_fingerprint,
+        evidence_score, evidence_summary, retailer_event_id, confidence_level."""
         async with self._db.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """INSERT INTO lottery_events (
@@ -249,8 +262,12 @@ class LotteryEventRepo:
                     apply_start_at, apply_end_at, result_at, purchase_start_at, purchase_end_at,
                     purchase_limit_text, conditions_text, source_primary_url,
                     official_confirmation_status, confidence_score, dedupe_key, status,
-                    product_name_normalized
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+                    product_name_normalized,
+                    application_url, product_url, entry_method, sale_status,
+                    page_fingerprint, evidence_score, evidence_summary,
+                    retailer_event_id, confidence_level
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
+                          $19,$20,$21,$22,$23,$24,$25,$26,$27)
                 RETURNING id""",
                 fields.get("product_id"), fields["retailer_name"], fields.get("store_name"),
                 fields["canonical_title"], fields["sales_type"],
@@ -263,6 +280,15 @@ class LotteryEventRepo:
                 fields["dedupe_key"],
                 fields.get("status", "active"),
                 fields.get("product_name_normalized"),
+                fields.get("application_url"),
+                fields.get("product_url"),
+                fields.get("entry_method", "unknown"),
+                fields.get("sale_status", "unknown"),
+                fields.get("page_fingerprint"),
+                fields.get("evidence_score"),
+                fields.get("evidence_summary"),
+                fields.get("retailer_event_id"),
+                fields.get("confidence_level"),
             )
         return row["id"]
 
@@ -359,21 +385,41 @@ class LotteryEventRepo:
         source_published_at: datetime | None,
         raw_snapshot_hash: str,
         extracted_payload: dict | None,
+        evidence_type: str = "unknown",
+        evidence_strength: int | None = None,
+        selector_version: str = "",
+        canonical_fields: dict | None = None,
+        raw_text_excerpt: str = "",
     ) -> None:
         async with self._db.pool.acquire() as conn:
             await conn.execute(
                 """INSERT INTO lottery_event_sources (
                     lottery_event_id, source_id, source_url, source_title,
-                    source_published_at, raw_snapshot_hash, extracted_payload_json
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+                    source_published_at, raw_snapshot_hash, extracted_payload_json,
+                    evidence_type, evidence_strength, selector_version,
+                    canonical_fields_json, raw_text_excerpt
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
                 ON CONFLICT (lottery_event_id, source_id, raw_snapshot_hash) DO NOTHING""",
                 lottery_event_id, source_id, source_url, source_title,
                 source_published_at, raw_snapshot_hash,
                 json.dumps(extracted_payload, ensure_ascii=False, default=str) if extracted_payload else None,
+                evidence_type,
+                evidence_strength,
+                selector_version,
+                json.dumps(canonical_fields, ensure_ascii=False, default=str) if canonical_fields else None,
+                raw_text_excerpt,
             )
 
     @staticmethod
     def _row_to_event(r) -> LotteryEvent:
+        # asyncpg Record は keys() を持つので、存在しないカラムは KeyError を吐く。
+        # 新カラムは nullable なので .get 相当として getattr + try で安全に取り出す。
+        def _g(key: str, default=None):
+            try:
+                return r[key]
+            except (KeyError, IndexError):
+                return default
+
         return LotteryEvent(
             id=r["id"], product_id=r["product_id"],
             retailer_name=r["retailer_name"], store_name=r["store_name"],
@@ -389,6 +435,15 @@ class LotteryEventRepo:
             status=r["status"], first_seen_at=r["first_seen_at"],
             last_seen_at=r["last_seen_at"],
             product_name_normalized=r["product_name_normalized"],
+            application_url=_g("application_url"),
+            product_url=_g("product_url"),
+            entry_method=_g("entry_method", "unknown") or "unknown",
+            sale_status=_g("sale_status", "unknown") or "unknown",
+            page_fingerprint=_g("page_fingerprint"),
+            evidence_score=_g("evidence_score"),
+            evidence_summary=_g("evidence_summary"),
+            retailer_event_id=_g("retailer_event_id"),
+            confidence_level=_g("confidence_level"),
         )
 
     async def list_other_stores_for_product(
