@@ -8,6 +8,7 @@ from . import (  # noqa: F401
     amiami_lottery,
     biccamera_lottery,
     c_labo_blog,
+    hbst_lottery,
     nyuka_now_news,
     official_news,
     official_products,

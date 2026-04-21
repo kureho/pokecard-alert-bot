@@ -54,6 +54,7 @@ LOTTERY_WATCH_ADAPTERS = [
     "amazon_search",
     "rakuten_books_entry",
     "yamada_lottery",
+    "hbst_lottery",
 ]
 
 

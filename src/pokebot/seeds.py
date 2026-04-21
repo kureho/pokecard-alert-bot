@@ -126,6 +126,14 @@ SEED_SOURCES: list[tuple[str, str, str, int]] = [
         "https://www.yamada-denki.jp/",
         90,
     ),
+    # ホビーステーション (hbst.net) RSS。ポケカ抽選告知を記事として密度高く投稿。
+    # 記事本文に応募期間・当選発表・購入期間が定型記載、Livepocket URL あり。
+    (
+        "hbst_lottery",
+        "retailer_lottery",
+        "https://www.hbst.net/feed/",
+        90,
+    ),
 ]
 
 
