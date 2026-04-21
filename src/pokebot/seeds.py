@@ -102,6 +102,14 @@ SEED_SOURCES: list[tuple[str, str, str, int]] = [
         "https://nyuka-now.com/archives/category/news/feed",
         80,
     ),
+    # Amazon search ASIN adapter: 予約/抽選/招待 kw を含む検索結果を候補化。
+    # 通常在庫販売は除外しポケカ限定の予約/販売予告のみ拾う。
+    (
+        "amazon_search",
+        "retailer_lottery",
+        "https://www.amazon.co.jp/s?k=pokemon+card",
+        85,
+    ),
 ]
 
 
