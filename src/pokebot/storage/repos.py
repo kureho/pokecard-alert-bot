@@ -27,6 +27,10 @@ class Source:
     base_url: str
     trust_score: int
     is_active: bool
+    last_success_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    consecutive_failures: int = 0
+    last_error: str | None = None
 
 
 @dataclass
@@ -163,6 +167,21 @@ class SourceRepo:
             )
         return row["id"]
 
+    @staticmethod
+    def _row_to_source(r) -> Source:
+        return Source(
+            id=r["id"],
+            source_name=r["source_name"],
+            source_type=r["source_type"],
+            base_url=r["base_url"],
+            trust_score=r["trust_score"],
+            is_active=r["is_active"],
+            last_success_at=r["last_success_at"],
+            last_attempt_at=r["last_attempt_at"],
+            consecutive_failures=r["consecutive_failures"],
+            last_error=r["last_error"],
+        )
+
     async def get_by_name(self, source_name: str) -> Source | None:
         async with self._db.pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -170,23 +189,14 @@ class SourceRepo:
             )
         if not row:
             return None
-        return Source(
-            id=row["id"], source_name=row["source_name"],
-            source_type=row["source_type"], base_url=row["base_url"],
-            trust_score=row["trust_score"], is_active=row["is_active"],
-        )
+        return self._row_to_source(row)
 
     async def list_active(self) -> list[Source]:
         async with self._db.pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT * FROM sources WHERE is_active = TRUE ORDER BY trust_score DESC"
             )
-        return [
-            Source(id=r["id"], source_name=r["source_name"],
-                   source_type=r["source_type"], base_url=r["base_url"],
-                   trust_score=r["trust_score"], is_active=r["is_active"])
-            for r in rows
-        ]
+        return [self._row_to_source(r) for r in rows]
 
     async def record_success(self, source_id: int, at: datetime) -> None:
         async with self._db.pool.acquire() as conn:
