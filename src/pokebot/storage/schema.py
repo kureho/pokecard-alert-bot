@@ -100,4 +100,9 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_event ON notifications(lottery_event_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_sent ON notifications(sent_at);
+
+-- 2026-04-21: 精度向上前に作成された sales_type='unknown' な active event を
+-- 新ロジックに合わせて pending_review へ retroactive migration。冪等。
+UPDATE lottery_events SET status = 'pending_review'
+WHERE status = 'active' AND sales_type = 'unknown';
 """
