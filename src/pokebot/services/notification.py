@@ -162,16 +162,31 @@ class NotificationDispatcher:
         now: datetime,
         result: NotificationResult,
     ) -> None:
-        """1イベントにつき 1 通知を試行。new or update どちらかの1本。"""
+        """1イベントにつき 1 通知を試行。new or update どちらかの1本。
+
+        Dispatch1: confidence_level ベース判定。
+        - confidence_level='confirmed_strong' → 即時送信対象
+        - confidence_level in {confirmed_medium, candidate, conflicting} → 送らない
+        - confidence_level IS NULL (既存 event) → legacy official_confirmation_status +
+          confidence_score で判定 (fallback)
+        """
         if event.sales_type not in NOTIFY_SALES_TYPES:
             result.skipped_low_confidence += 1
             return
-        if event.confidence_score < CONFIDENCE_HIGH:
-            result.skipped_low_confidence += 1
-            return
-        if event.official_confirmation_status != "confirmed":
-            result.skipped_low_confidence += 1
-            return
+
+        if event.confidence_level is not None:
+            # 新 flow: confirmed_strong のみ即通知。confirmed_medium は DB 保存のみ。
+            if event.confidence_level != "confirmed_strong":
+                result.skipped_low_confidence += 1
+                return
+        else:
+            # Fallback: legacy event (confidence_level 未 enrich)。
+            if event.official_confirmation_status != "confirmed":
+                result.skipped_low_confidence += 1
+                return
+            if event.confidence_score < CONFIDENCE_HIGH:
+                result.skipped_low_confidence += 1
+                return
 
         # Product 単位クールダウン: 同じ商品が他店舗で既に new 送信済み (24h以内) なら suppress。
         # 「アビスアイ抽選」が浜松で通知済みなら、名古屋駅前/大須/静岡/岐阜の通知は抑止。
@@ -429,10 +444,15 @@ class NotificationDispatcher:
         """1 event の deadline 通知を送る (新 flow 専用: dedupe, send, mark)。"""
         if event.sales_type not in NOTIFY_SALES_TYPES:
             return
-        if event.confidence_score < CONFIDENCE_HIGH:
-            return
-        if event.official_confirmation_status != "confirmed":
-            return
+        # confidence_level ベース判定 (+ legacy fallback)
+        if event.confidence_level is not None:
+            if event.confidence_level != "confirmed_strong":
+                return
+        else:
+            if event.official_confirmation_status != "confirmed":
+                return
+            if event.confidence_score < CONFIDENCE_HIGH:
+                return
 
         ndk = build_notification_dedupe_key(
             lottery_dedupe_key=event.dedupe_key,

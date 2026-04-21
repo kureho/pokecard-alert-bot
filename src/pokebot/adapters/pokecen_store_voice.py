@@ -157,5 +157,7 @@ class PokecenStoreVoiceAdapter(SourceAdapter):
                         "body_fetched": body_info is not None,
                         "body_score": body_info.score if body_info else 0,
                     },
+                    evidence_type="store_notice",
+                    application_url=link,
                 ))
         return out

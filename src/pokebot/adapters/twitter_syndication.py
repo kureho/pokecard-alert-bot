@@ -202,6 +202,9 @@ class _TwitterSyndicationBase(SourceAdapter):
                         "text_preview": text[:500],
                         "detected_retailer": retailer,
                     },
+                    evidence_type="social_post",
+                    raw_text_excerpt=text[:500],
+                    retailer_event_id=tweet_id or None,
                 )
             )
         return out

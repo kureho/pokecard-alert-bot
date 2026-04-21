@@ -76,5 +76,7 @@ class PokemonOfficialProductsAdapter(SourceAdapter):
                     "product_type": product_type,
                     "official_product_url": url,
                 },
+                evidence_type="official_notice",
+                product_url=url,
             ))
         return out

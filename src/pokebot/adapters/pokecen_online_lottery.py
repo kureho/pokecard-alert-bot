@@ -58,5 +58,9 @@ class PokecenOnlineLotteryAdapter(SourceAdapter):
                 source_title=title,
                 raw_snapshot=content_hash(ctx + "|" + url),
                 extracted_payload={"row_text": ctx, "url": url},
+                evidence_type="entry_page",
+                application_url=url,
+                entry_method="lottery_page",
+                raw_text_excerpt=ctx[:500],
             ))
         return candidates

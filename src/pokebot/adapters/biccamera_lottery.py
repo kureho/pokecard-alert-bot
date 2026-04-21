@@ -41,5 +41,8 @@ class BiccameraLotteryAdapter(SourceAdapter):
                 source_title=title,
                 raw_snapshot=content_hash(title + "|" + url),
                 extracted_payload={"title": title, "url": url},
+                evidence_type="entry_page",
+                application_url=url,
+                entry_method="lottery_page",
             ))
         return out

@@ -53,6 +53,8 @@ async def _create_confirmed_event(db):
         apply_start_at=datetime(2026, 5, 10, 14),
         apply_end_at=datetime(2026, 5, 14, 23, 59),
         extracted_payload={"body_fetched": True, "title_category": "lottery_active"},
+        evidence_type="official_notice",
+        application_url="https://www.pokemon-card.com/info/1",
     )
     out = await svc.apply(c, now=datetime(2026, 4, 21, 12))
     return out.event_id
@@ -120,6 +122,7 @@ async def test_dispatch_respects_per_run_cap(db):
             apply_start_at=datetime(2026, 5, 10, 14),
             apply_end_at=datetime(2026, 5, 14, 23, 59),
             extracted_payload={"body_fetched": True, "title_category": "lottery_active"},
+            evidence_type="official_notice",
         )
         await svc.apply(c, now=now)
     notifier = FakeNotifier()
@@ -322,6 +325,7 @@ async def test_dispatch_suppresses_same_product_other_store(db):
             apply_start_at=datetime(2026, 5, 10, 14),
             apply_end_at=datetime(2026, 5, 14, 23, 59),
             extracted_payload={"body_fetched": True},
+            evidence_type="official_notice",
         )
         await svc.apply(c, now=now)
 
@@ -513,6 +517,7 @@ async def test_dispatch_new_message_mentions_other_stores(db):
             apply_start_at=datetime(2026, 5, 10, 14),
             apply_end_at=datetime(2026, 5, 14, 23, 59),
             extracted_payload={"body_fetched": True},
+            evidence_type="official_notice",
         )
         await svc.apply(c, now=now)
 
@@ -565,6 +570,7 @@ async def test_product_new_cooldown_is_72h(db):
         apply_start_at=datetime(2026, 5, 10, 14),
         apply_end_at=datetime(2026, 5, 14, 23, 59),
         extracted_payload={"body_fetched": True},
+        evidence_type="official_notice",
     )
     await svc.apply(c1, now=t0)
 
@@ -596,9 +602,171 @@ async def test_product_new_cooldown_is_72h(db):
         apply_start_at=datetime(2026, 5, 10, 14),
         apply_end_at=datetime(2026, 5, 14, 23, 59),
         extracted_payload={"body_fetched": True},
+        evidence_type="official_notice",
     )
     await svc.apply(c2, now=t1)
     r2 = await disp.dispatch(now=t1 + timedelta(minutes=5))
     # 72h 以内なので依然 suppress される
     assert r2.new_sent == 0
     assert r2.suppressed >= 1
+
+
+# ===== Dispatch1: confidence_level ベース送信判定 =====
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sends_only_confirmed_strong(db):
+    """confidence_level='confirmed_strong' のみ送信。medium/candidate は skip。"""
+    await _seed_source(db)
+    svc = LotteryEventUpsertService(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        source_repo=SourceRepo(db),
+    )
+    now = datetime(2026, 4, 21, 12)
+
+    # strong: official_notice 全情報
+    c_strong = Candidate(
+        product_name_raw="A", product_name_normalized="aaaa",
+        retailer_name="pokemoncenter_online", sales_type="lottery",
+        canonical_title="Aの抽選", source_name="pokemon_official_news",
+        source_url="https://x/a", source_title="Aの抽選", raw_snapshot="ha",
+        apply_start_at=datetime(2026, 5, 10, 14),
+        apply_end_at=datetime(2026, 5, 14, 23, 59),
+        extracted_payload={"body_fetched": True},
+        evidence_type="official_notice",
+    )
+    # medium: title_only ペナルティで 60 台 (medium 相当)
+    c_medium = Candidate(
+        product_name_raw="B", product_name_normalized="bbbb",
+        retailer_name="pokemoncenter_online", sales_type="lottery",
+        canonical_title="Bの抽選", source_name="pokemon_official_news",
+        source_url="https://x/b", source_title="Bの抽選", raw_snapshot="hb",
+        apply_start_at=datetime(2026, 5, 10, 14),
+        apply_end_at=datetime(2026, 5, 14, 23, 59),
+        extracted_payload={"body_fetched": False},  # title_only → -20
+        evidence_type="official_notice",
+    )
+    await svc.apply(c_strong, now=now)
+    await svc.apply(c_medium, now=now)
+
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    result = await disp.dispatch(now=now + timedelta(minutes=5))
+    # strong のみ送信、medium は skipped_low_confidence
+    assert result.new_sent == 1
+    assert result.skipped_low_confidence >= 1
+    assert len(notifier.sent) == 1
+    assert "Aの抽選" in notifier.sent[0]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_skips_candidate_level_events(db):
+    """confidence_level='candidate' (social_post) は送らない。"""
+    await _seed_source(db, name="twitter_x", trust=80)
+    svc = LotteryEventUpsertService(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        source_repo=SourceRepo(db),
+    )
+    c = Candidate(
+        product_name_raw="C", product_name_normalized="cccc",
+        retailer_name="pokemoncenter_online", sales_type="lottery",
+        canonical_title="Cの抽選", source_name="twitter_x",
+        source_url="https://t/c", source_title="Cの抽選", raw_snapshot="hc",
+        apply_start_at=datetime(2026, 5, 10, 14),
+        apply_end_at=datetime(2026, 5, 14, 23, 59),
+        extracted_payload={"body_fetched": True},
+        evidence_type="social_post",
+    )
+    await svc.apply(c, now=datetime(2026, 4, 21, 12))
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+    )
+    result = await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
+    assert result.new_sent == 0
+    assert result.skipped_low_confidence >= 1
+    assert notifier.sent == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_legacy_fallback_uses_official_confirmation_status(db):
+    """confidence_level IS NULL (既存 DB 直接 insert) な event は
+    legacy official_confirmation_status + confidence_score で判定される。"""
+    lrepo = LotteryEventRepo(db)
+    # confidence_level を NULL のまま直接 insert
+    eid = await lrepo.create(
+        retailer_name="pokemoncenter_online",
+        canonical_title="legacy event",
+        sales_type="lottery",
+        dedupe_key="legacy-k1",
+        apply_start_at=datetime(2026, 5, 10, 14),
+        apply_end_at=datetime(2026, 5, 14, 23, 59),
+        source_primary_url="https://legacy",
+        confidence_score=95,
+        official_confirmation_status="confirmed",
+        status="active",
+        # confidence_level= 省略 → NULL
+    )
+    # first_seen_at を window 内 (今日)にセット
+    async with db.pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE lottery_events SET first_seen_at = $1 WHERE id = $2",
+            datetime(2026, 4, 21, 12), eid,
+        )
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=lrepo,
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    result = await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
+    assert result.new_sent == 1
+    assert len(notifier.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_legacy_fallback_skips_low_score(db):
+    """confidence_level NULL + 低 confidence_score なら fallback でも skip。"""
+    lrepo = LotteryEventRepo(db)
+    eid = await lrepo.create(
+        retailer_name="pokemoncenter_online",
+        canonical_title="legacy low",
+        sales_type="lottery",
+        dedupe_key="legacy-k2",
+        apply_start_at=datetime(2026, 5, 10, 14),
+        apply_end_at=datetime(2026, 5, 14, 23, 59),
+        source_primary_url="https://legacy",
+        confidence_score=50,
+        official_confirmation_status="unconfirmed",
+        status="active",
+    )
+    async with db.pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE lottery_events SET first_seen_at = $1 WHERE id = $2",
+            datetime(2026, 4, 21, 12), eid,
+        )
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=lrepo,
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+    )
+    result = await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
+    assert result.new_sent == 0
+    assert result.skipped_low_confidence >= 1

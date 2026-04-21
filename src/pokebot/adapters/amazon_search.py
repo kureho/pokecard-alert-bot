@@ -84,6 +84,9 @@ class AmazonSearchAdapter(SourceAdapter):
                     source_title=title[:200],
                     raw_snapshot=content_hash(asin),
                     extracted_payload={"asin": asin, "title": title},
+                    evidence_type="search_result",
+                    product_url=url_full,
+                    retailer_event_id=asin,
                 )
             )
         return out

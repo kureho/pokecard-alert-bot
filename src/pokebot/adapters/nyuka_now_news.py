@@ -139,6 +139,7 @@ class NyukaNowNewsAdapter(SourceAdapter):
                     source_published_at=ts,
                     raw_snapshot=content_hash(title + "|" + link),
                     extracted_payload={"title": title, "url": link},
+                    evidence_type="rss_item",
                 )
             )
         return out
