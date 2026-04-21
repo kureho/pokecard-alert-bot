@@ -6,6 +6,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+from ..lib.body_extractor import extract_body_info
 from ..lib.normalize import normalize_product_name
 from ..lib.snapshot import content_hash
 from ..lib.text_clean import clean_text
@@ -58,15 +59,29 @@ def _extract_shop(href: str) -> tuple[str, str]:
 
 @register_adapter("c_labo_blog")
 class CLaboBlogAdapter(SourceAdapter):
-    """カードラボ 店舗ブログ。ポケカ関連の抽選/再販告知を横断抽出。"""
+    """カードラボ 店舗ブログ。ポケカ関連の抽選/再販告知を横断抽出。
 
-    def __init__(self, *, html: str | None = None) -> None:
+    list ページの a.js-targetLink から候補を拾い、各記事本文を fetch して
+    「応募期間」「結果発表」「購入期間」などを抽出する。
+    本文 fetch は per-run で上限を設け、過剰な GET を避ける。
+    """
+
+    def __init__(
+        self,
+        *,
+        html: str | None = None,
+        body_fetcher=None,
+        max_body_fetch: int = 15,
+    ) -> None:
         self._html = html
+        self._body_fetcher = body_fetcher
+        self._max_body_fetch = max_body_fetch
 
     async def run(self) -> list[Candidate]:
         html = self._html if self._html is not None else await fetch_text(URL)
         soup = BeautifulSoup(html, "html.parser")
         out: list[Candidate] = []
+        fetched = 0
 
         # .claboCard > .js-targetLink (title 属性に記事タイトル、href に URL)
         for a in soup.select("a.js-targetLink[href]"):
@@ -112,12 +127,42 @@ class CLaboBlogAdapter(SourceAdapter):
             if not product_name_normalized or len(product_name_normalized) < 2:
                 continue
 
-            # blog list には日付がないので記事ページ fetch が望ましいが、
-            # Phase 1 では list 情報のみで candidate 化する。
-            # source_published_at=None → confidence でペナルティ → confirmed に届かない可能性高
             sales_type = analysis.inferred_sales_type
             if sales_type == "unknown":
                 sales_type = "lottery"
+
+            # 記事本文 fetch (per-run cap あり)
+            body_info = None
+            body_html = None
+            if fetched < self._max_body_fetch:
+                try:
+                    body_html = (
+                        await self._body_fetcher(url)
+                        if self._body_fetcher
+                        else await fetch_text(url)
+                    )
+                    body_info = extract_body_info(body_html)
+                    fetched += 1
+                except Exception as e:  # noqa: BLE001
+                    log.warning("c_labo body fetch failed for %s: %s", url, e)
+
+            # 本文から dates 抽出
+            apply_start = body_info.apply_start_at if body_info else None
+            apply_end = body_info.apply_end_at if body_info else None
+            result_at = body_info.result_at if body_info else None
+            purchase_start = body_info.purchase_start_at if body_info else None
+            purchase_end = body_info.purchase_end_at if body_info else None
+            purchase_limit = body_info.purchase_limit_text if body_info else None
+            conditions = body_info.conditions_text if body_info else None
+
+            # 商品名: body h1/title があればそちらを優先
+            if body_info and body_info.product_name:
+                prod_from_body = normalize_product_name(body_info.product_name)
+                if prod_from_body and len(prod_from_body) >= 2:
+                    product_name_normalized = prod_from_body
+                    core = clean_text(body_info.product_name)
+
+            snapshot_src = body_html if body_html else (title + "|" + url)
 
             out.append(
                 Candidate(
@@ -127,15 +172,24 @@ class CLaboBlogAdapter(SourceAdapter):
                     store_name=store_display,
                     sales_type=sales_type,
                     canonical_title=title,
+                    apply_start_at=apply_start,
+                    apply_end_at=apply_end,
+                    result_at=result_at,
+                    purchase_start_at=purchase_start,
+                    purchase_end_at=purchase_end,
+                    purchase_limit_text=purchase_limit,
+                    conditions_text=conditions,
                     source_name="c_labo_blog",
                     source_url=url,
                     source_title=title,
-                    raw_snapshot=content_hash(title + "|" + url),
+                    raw_snapshot=content_hash(snapshot_src),
                     extracted_payload={
                         "shop_slug": shop_slug,
                         "title": title,
                         "url": url,
                         "title_category": str(analysis.category),
+                        "body_fetched": body_info is not None,
+                        "body_score": body_info.score if body_info else 0,
                     },
                 )
             )
