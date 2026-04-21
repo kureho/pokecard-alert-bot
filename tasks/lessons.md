@@ -31,3 +31,14 @@
 - auto mode は実行許可であって、消費資源に対するフリーパスではない
 - ユーザーの個人資源 (LINE 枠、API クレジット、メール送信数) を扱うときは、事前に「これを実行すると N 件消費される」を宣言してから実行する
 - dry-run モードが存在しない状態で本番実行するのは、ハンマーを目隠しで振るのと同じ
+
+## 2026-04-21 SCHEMA_SQL に列追加したとき `CREATE INDEX` が `ALTER TABLE` より前にあると既存 DB で落ちる
+
+### 何が起きたか
+- `lottery_events` に `product_name_normalized` 列を追加するのに `CREATE TABLE IF NOT EXISTS` だけでは既存 DB に列が作られない
+- `ALTER TABLE ADD COLUMN IF NOT EXISTS` を用意したが、SCHEMA_SQL 内の順序で `CREATE INDEX ... ON lottery_events(product_name_normalized)` が先に実行されて `UndefinedColumnError`
+
+### ルール
+- **冪等 migration SQL を同じ SCHEMA_SQL に書くときは、`ALTER TABLE` を対応する `CREATE INDEX` より先に配置する**
+- 「新規 DB は CREATE TABLE で済み、既存 DB は ALTER で追随」というパターンを使う場合、依存する index / FK 等のオブジェクトは ALTER の後ろに置く
+- テストで TRUNCATE しているだけの test DB は既存 DB と同じ扱い (テーブル定義は再作成されない) なので、順序バグは test 一回で顕在化する

@@ -22,8 +22,11 @@ def compute_confidence(
     # 追加: 本文抽出/タイトルのみの由来
     body_extracted: bool = False,
     title_only: bool = True,
+    # 追加: 同一 product を検出している他ソース数 (自分自身除く)
+    cross_source_count: int = 0,
 ) -> int:
-    """trust 基礎 → body ボーナス → 情報ボーナス → ペナルティ → clamp。"""
+    """trust 基礎 → body ボーナス → 情報ボーナス → ペナルティ →
+    クロスソース加点 → clamp。"""
     score = source_trust_score
     if body_extracted:
         score += 5
@@ -55,6 +58,12 @@ def compute_confidence(
         score -= 15
     if conflicting_existing:
         score -= 15
+    # クロスソース corroboration: 同一 product が複数ソースで検出される
+    # → 情報源の独立一致は強い信頼シグナル。
+    if cross_source_count >= 2:
+        score += 15
+    elif cross_source_count >= 1:
+        score += 5
     return max(0, min(100, score))
 
 

@@ -87,6 +87,15 @@ class LotteryEventUpsertService:
         body_extracted = bool((candidate.extracted_payload or {}).get("body_fetched"))
         title_only = not body_extracted
 
+        # クロスソース corroboration: 同一 product が他ソースで検出されているか。
+        # existing がある場合は existing 自身をカウント対象から除外する
+        # (自分の別 snapshot を count に入れないため)。
+        existing = await self._lottery_repo.find_by_dedupe_key(dedupe_key)
+        cross_source_count = await self._lottery_repo.count_distinct_sources_for_product(
+            candidate.product_name_normalized,
+            exclude_event_id=existing.id if existing else None,
+        )
+
         confidence = compute_confidence(
             source_trust_score=source_trust,
             has_product_match=product_match,
@@ -106,6 +115,7 @@ class LotteryEventUpsertService:
             ),
             body_extracted=body_extracted,
             title_only=title_only,
+            cross_source_count=cross_source_count,
         )
         status = classify_confirmation(
             confidence_score=confidence, source_trust_score=source_trust
@@ -123,7 +133,6 @@ class LotteryEventUpsertService:
         if candidate.sales_type in ("unknown", "", None):
             event_status = "pending_review"
 
-        existing = await self._lottery_repo.find_by_dedupe_key(dedupe_key)
         if existing is None:
             new_id = await self._lottery_repo.create(
                 product_id=product_id,
@@ -143,6 +152,7 @@ class LotteryEventUpsertService:
                 confidence_score=confidence,
                 dedupe_key=dedupe_key,
                 status=event_status,
+                product_name_normalized=candidate.product_name_normalized,
             )
             if source_id:
                 await self._lottery_repo.add_source_link(
@@ -171,6 +181,12 @@ class LotteryEventUpsertService:
             updates["product_id"] = product_id
         if candidate.source_url and existing.source_primary_url != candidate.source_url:
             updates["source_primary_url"] = candidate.source_url
+        # 既存 event に product_name_normalized が未記録なら backfill
+        if (
+            candidate.product_name_normalized
+            and not existing.product_name_normalized
+        ):
+            updates["product_name_normalized"] = candidate.product_name_normalized
         # 古い告知は retroactive に archive
         if event_status == "archived" and existing.status == "active":
             updates["status"] = "archived"

@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS lottery_events (
     confidence_score                INTEGER NOT NULL DEFAULT 0,
     dedupe_key                      TEXT NOT NULL UNIQUE,
     status                          TEXT NOT NULL DEFAULT 'active',  -- active, ended, cancelled, updated
+    product_name_normalized         TEXT,
     first_seen_at                   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_seen_at                    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at                      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -72,6 +73,14 @@ CREATE TABLE IF NOT EXISTS lottery_events (
 CREATE INDEX IF NOT EXISTS idx_lottery_events_product ON lottery_events(product_id);
 CREATE INDEX IF NOT EXISTS idx_lottery_events_status ON lottery_events(status);
 CREATE INDEX IF NOT EXISTS idx_lottery_events_apply_start ON lottery_events(apply_start_at);
+
+-- 2026-04-21: product_name_normalized 列追加 (冪等)。既存 event は NULL のまま、
+-- 新規 event から記録。クロスソース corroboration で使用する。
+-- ALTER は CREATE INDEX より先に実行する必要あり (既存 DB で列が未作成のまま
+-- index 定義にぶつかるのを避ける)。
+ALTER TABLE lottery_events ADD COLUMN IF NOT EXISTS product_name_normalized TEXT;
+CREATE INDEX IF NOT EXISTS idx_lottery_events_product_name
+    ON lottery_events(product_name_normalized);
 
 CREATE TABLE IF NOT EXISTS lottery_event_sources (
     id                      BIGSERIAL PRIMARY KEY,

@@ -55,6 +55,7 @@ class LotteryEvent:
     status: str
     first_seen_at: datetime
     last_seen_at: datetime
+    product_name_normalized: str | None = None
 
 
 class ProductRepo:
@@ -240,15 +241,16 @@ class LotteryEventRepo:
         """Fields: product_id, retailer_name, store_name, canonical_title, sales_type,
         apply_start_at, apply_end_at, result_at, purchase_start_at, purchase_end_at,
         purchase_limit_text, conditions_text, source_primary_url, official_confirmation_status,
-        confidence_score, dedupe_key, status"""
+        confidence_score, dedupe_key, status, product_name_normalized"""
         async with self._db.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """INSERT INTO lottery_events (
                     product_id, retailer_name, store_name, canonical_title, sales_type,
                     apply_start_at, apply_end_at, result_at, purchase_start_at, purchase_end_at,
                     purchase_limit_text, conditions_text, source_primary_url,
-                    official_confirmation_status, confidence_score, dedupe_key, status
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                    official_confirmation_status, confidence_score, dedupe_key, status,
+                    product_name_normalized
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
                 RETURNING id""",
                 fields.get("product_id"), fields["retailer_name"], fields.get("store_name"),
                 fields["canonical_title"], fields["sales_type"],
@@ -260,6 +262,7 @@ class LotteryEventRepo:
                 fields.get("confidence_score", 0),
                 fields["dedupe_key"],
                 fields.get("status", "active"),
+                fields.get("product_name_normalized"),
             )
         return row["id"]
 
@@ -385,7 +388,35 @@ class LotteryEventRepo:
             confidence_score=r["confidence_score"], dedupe_key=r["dedupe_key"],
             status=r["status"], first_seen_at=r["first_seen_at"],
             last_seen_at=r["last_seen_at"],
+            product_name_normalized=r["product_name_normalized"],
         )
+
+    async def count_distinct_sources_for_product(
+        self,
+        product_name_normalized: str | None,
+        *,
+        exclude_event_id: int | None = None,
+    ) -> int:
+        """指定 product が何種類の source から検出されているかを返す。
+
+        クロスソース corroboration: 同一商品が 2+ ソースで検出されたら
+        confidence にボーナスを付ける判定に使う。
+        """
+        if not product_name_normalized:
+            return 0
+        sql = (
+            "SELECT COUNT(DISTINCT les.source_id) "
+            "FROM lottery_event_sources les "
+            "JOIN lottery_events le ON le.id = les.lottery_event_id "
+            "WHERE le.product_name_normalized = $1"
+        )
+        args: list = [product_name_normalized]
+        if exclude_event_id is not None:
+            sql += " AND le.id != $2"
+            args.append(exclude_event_id)
+        async with self._db.pool.acquire() as conn:
+            val = await conn.fetchval(sql, *args)
+        return val or 0
 
 
 class NotificationRepo:

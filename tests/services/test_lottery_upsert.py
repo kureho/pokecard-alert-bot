@@ -134,6 +134,66 @@ async def test_unknown_sales_type_is_pending_review(db):
 
 
 @pytest.mark.asyncio
+async def test_cross_source_corroboration_boosts_confidence(db):
+    """同一 product が 2 ソースで検出 → +15 ボーナスで confidence 上昇。"""
+    # 2 つの source を登録: 公式 (trust=100) と Twitter (trust=80)
+    srepo = SourceRepo(db)
+    await srepo.upsert(
+        source_name="pokemon_official_news", source_type="official_news",
+        base_url="https://x", trust_score=100,
+    )
+    await srepo.upsert(
+        source_name="twitter_pokecayoyaku", source_type="social",
+        base_url="https://y", trust_score=80,
+    )
+    svc = LotteryEventUpsertService(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        source_repo=srepo,
+    )
+    now = datetime(2026, 4, 21, 12)
+
+    # 1件目: 公式ソース側で product=アビスアイ
+    c1 = _cand(
+        product_name_normalized="アビスアイ",
+        source_name="pokemon_official_news",
+        source_url="https://pokemon-card.com/a",
+        raw_snapshot="h-official",
+    )
+    out1 = await svc.apply(c1, now=now)
+    assert out1 and out1.is_new
+
+    # 2件目: Twitter 側で別 retailer/store → 別 dedupe_key。product は同じ。
+    c2 = _cand(
+        product_name_normalized="アビスアイ",
+        retailer_name="amazon",
+        store_name="@pokecayoyaku",
+        source_name="twitter_pokecayoyaku",
+        source_url="https://twitter.com/x/status/1",
+        raw_snapshot="h-twitter",
+    )
+    out2 = await svc.apply(c2, now=now)
+    assert out2 and out2.is_new
+    # Twitter 側 event の confidence には cross_source_count=1 (公式側 1 ソース) による
+    # +5 ボーナスが乗っている。
+    ev2 = await LotteryEventRepo(db).find_by_dedupe_key(out2.dedupe_key)
+    # source_trust=80, body_extracted=True (+5), product_match=False (product_repo 未upsertのため),
+    # apply_start/end +5+5, retailer/store/url +2+2+2, sales_type_known +5
+    # = 80 + 5 + 5 + 5 + 2 + 2 + 2 + 5 = 106 → clamp 100
+    # ただし product_name_ambiguous は len("アビスアイ")>=3 なので no penalty
+    # → +5 (cross_source_count=1) しても 100 を超えるだけ (clamp)。
+    assert ev2.confidence_score == 100
+
+
+@pytest.mark.asyncio
+async def test_count_distinct_sources_returns_zero_for_empty(db):
+    """product_name_normalized が None/空 なら 0。"""
+    repo = LotteryEventRepo(db)
+    assert await repo.count_distinct_sources_for_product(None) == 0
+    assert await repo.count_distinct_sources_for_product("") == 0
+
+
+@pytest.mark.asyncio
 async def test_existing_active_event_is_archived_retroactively(db):
     """既存 active event が新たな candidate で古いと判明 → retroactive archive。"""
     from datetime import timedelta
