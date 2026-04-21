@@ -50,6 +50,7 @@ LOTTERY_WATCH_ADAPTERS = [
     "twitter_ys_info",
     "twitter_usagiya_jounai",
     "twitter_t_sanoTCG",
+    "nyuka_now_news",
 ]
 
 

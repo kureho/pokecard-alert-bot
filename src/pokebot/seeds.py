@@ -94,6 +94,14 @@ SEED_SOURCES: list[tuple[str, str, str, int]] = [
         "https://syndication.twitter.com/srv/timeline-profile/screen-name/T_sanoTCG",
         75,
     ),
+    # nyuka-now: 販売予定・販路網羅のまとめ記事 RSS (aggregator)。
+    # Amazon/楽天/ヨドバシ等の販売予定時刻を早期にまとめるため、apply_start_at 取得用に重視。
+    (
+        "nyuka_now_news",
+        "aggregator",
+        "https://nyuka-now.com/archives/category/news/feed",
+        80,
+    ),
 ]
 
 
