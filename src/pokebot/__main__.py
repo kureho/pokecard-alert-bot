@@ -53,6 +53,7 @@ LOTTERY_WATCH_ADAPTERS = [
     "nyuka_now_news",
     "amazon_search",
     "rakuten_books_entry",
+    "yamada_lottery",
 ]
 
 

@@ -17,6 +17,7 @@ from . import (  # noqa: F401
     pokecen_store_voice,
     rakuten_books_entry,
     twitter_syndication,
+    yamada_lottery,
     yodobashi_lottery,
 )
 

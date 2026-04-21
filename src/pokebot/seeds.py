@@ -118,6 +118,14 @@ SEED_SOURCES: list[tuple[str, str, str, int]] = [
         "https://books.rakuten.co.jp/event/game/card/entry/",
         95,
     ),
+    # ヤマダデンキ TOP → /information/YYMMDD_pokemon-card/ 告知。
+    # 公式店舗告知で evidence_type=store_notice、trust=90 で confirmed 対象。
+    (
+        "yamada_lottery",
+        "retailer_lottery",
+        "https://www.yamada-denki.jp/",
+        90,
+    ),
 ]
 
 
