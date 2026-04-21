@@ -105,4 +105,8 @@ CREATE INDEX IF NOT EXISTS idx_notifications_sent ON notifications(sent_at);
 -- 新ロジックに合わせて pending_review へ retroactive migration。冪等。
 UPDATE lottery_events SET status = 'pending_review'
 WHERE status = 'active' AND sales_type = 'unknown';
+
+-- 2026-04-21: daily_summary 通知のため lottery_event_id を nullable に。
+-- 既に NULL 許可されている場合は no-op。
+ALTER TABLE notifications ALTER COLUMN lottery_event_id DROP NOT NULL;
 """

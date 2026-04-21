@@ -183,7 +183,9 @@ async def job_lottery_watch() -> None:
                     total_updated += 1
         log.info(
             "lottery_watch complete: new=%d updated=%d first_run_seeded=%d",
-            total_new, total_updated, total_seeded,
+            total_new,
+            total_updated,
+            total_seeded,
         )
     finally:
         await db.close()
@@ -213,6 +215,20 @@ async def job_notify_dispatch() -> None:
             result.suppressed,
             result.skipped_low_confidence,
         )
+
+        # Daily summary (JST 09:00 窓で 1日1回)
+        from .services.daily_summary import DailySummaryService
+
+        hhmm = os.environ.get("DAILY_REPORT_JST", "09:00")
+        summary = DailySummaryService(
+            db=db,
+            notification_repo=NotificationRepo(db),
+            notifier=notifier,
+            hhmm=hhmm,
+        )
+        fired = await summary.maybe_run(now=now)
+        if fired:
+            log.info("daily summary fired")
     finally:
         await db.close()
 
@@ -313,8 +329,7 @@ async def job_audit() -> None:
             )
             for r in rows:
                 print(
-                    f"  [{r['id']:>4}] conf={r['confidence_score']:3d} "
-                    f"{r['canonical_title'][:60]}"
+                    f"  [{r['id']:>4}] conf={r['confidence_score']:3d} {r['canonical_title'][:60]}"
                 )
                 print(f"         url={r['source_primary_url']}")
 
@@ -360,9 +375,7 @@ async def job_audit() -> None:
             print("=" * 80)
             print("# sources 状態:")
             print("=" * 80)
-            rows = await conn.fetch(
-                "SELECT * FROM sources ORDER BY trust_score DESC, source_name"
-            )
+            rows = await conn.fetch("SELECT * FROM sources ORDER BY trust_score DESC, source_name")
             for r in rows:
                 succ = r["last_success_at"].isoformat() if r["last_success_at"] else "-"
                 err = (r["last_error"] or "")[:60]
