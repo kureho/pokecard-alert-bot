@@ -237,6 +237,18 @@ async def job_notify_dispatch() -> None:
         fired = await summary.maybe_run(now=now)
         if fired:
             log.info("daily summary fired")
+
+        # Silence Detector: source の連続失敗/長時間無反応を検知して警告
+        from .services.silence_detector import SilenceDetector
+
+        silence = SilenceDetector(
+            db=db,
+            notification_repo=NotificationRepo(db),
+            notifier=notifier,
+        )
+        silence_sent = await silence.tick(now=now)
+        if silence_sent:
+            log.info("silence warnings sent: %d", silence_sent)
     finally:
         await db.close()
 
