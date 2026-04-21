@@ -483,6 +483,86 @@ async def job_audit() -> None:
                 )
                 if err:
                     print(f"    last_error: {err}")
+
+            # --- KPI metrics ---
+            # 運用改善: source ごとの出力量 / confirmed 到達率 / archived 率を出す。
+            # signal: confirmed_strong に貢献した source ほど価値が高い。
+            # noise: pending_review / archived の比率が高い source はノイズ源。
+            print()
+            print("=" * 80)
+            print("# KPI: source × 出力分布 (全期間):")
+            print("=" * 80)
+            rows = await conn.fetch(
+                """SELECT s.source_name,
+                          COUNT(DISTINCT les.lottery_event_id) AS events,
+                          COUNT(DISTINCT les.lottery_event_id)
+                              FILTER (WHERE le.status = 'active') AS active,
+                          COUNT(DISTINCT les.lottery_event_id)
+                              FILTER (WHERE le.status = 'archived') AS archived,
+                          COUNT(DISTINCT les.lottery_event_id)
+                              FILTER (WHERE le.status = 'pending_review') AS pending,
+                          COUNT(DISTINCT les.lottery_event_id)
+                              FILTER (WHERE le.confidence_level = 'confirmed_strong')
+                              AS strong,
+                          COUNT(DISTINCT les.lottery_event_id)
+                              FILTER (WHERE le.confidence_level = 'confirmed_medium')
+                              AS medium
+                     FROM sources s
+                     LEFT JOIN lottery_event_sources les ON les.source_id = s.id
+                     LEFT JOIN lottery_events le ON le.id = les.lottery_event_id
+                    GROUP BY s.source_name
+                    ORDER BY events DESC"""
+            )
+            for r in rows:
+                total = r["events"] or 0
+                if total == 0:
+                    print(f"  {r['source_name']:38} events=0 (no data)")
+                    continue
+                strong = r["strong"] or 0
+                medium = r["medium"] or 0
+                archived = r["archived"] or 0
+                pending = r["pending"] or 0
+                active = r["active"] or 0
+                # precision proxy: strong 比率 (高いほど価値高)。
+                # noise proxy: archived+pending 比率 (高いほどノイズ源)。
+                precision = (strong / total * 100) if total else 0
+                noise = ((archived + pending) / total * 100) if total else 0
+                print(
+                    f"  {r['source_name']:38} events={total:4d} "
+                    f"active={active:3d} strong={strong:3d} medium={medium:3d} "
+                    f"archived={archived:3d} pending={pending:3d}"
+                )
+                print(f"     precision(strong%)={precision:5.1f}  noise(arch+pend%)={noise:5.1f}")
+
+            # 通知由来 source: どの source が実際に LINE 通知まで到達したか
+            print()
+            print("=" * 80)
+            print("# KPI: LINE 送信に到達した event の source 内訳 (全期間):")
+            print("=" * 80)
+            rows = await conn.fetch(
+                """SELECT s.source_name,
+                          COUNT(DISTINCT n.id) AS sent,
+                          COUNT(DISTINCT n.id) FILTER (WHERE n.notification_type = 'new')
+                              AS new_sent,
+                          COUNT(DISTINCT n.id) FILTER (WHERE n.notification_type = 'update')
+                              AS upd_sent
+                     FROM notifications n
+                     JOIN lottery_event_sources les ON les.lottery_event_id = n.lottery_event_id
+                     JOIN sources s ON s.id = les.source_id
+                    WHERE n.sent_at IS NOT NULL
+                      AND n.notification_type IN ('new', 'update', 'deadline', 'result')
+                    GROUP BY s.source_name
+                    ORDER BY sent DESC"""
+            )
+            if rows:
+                for r in rows:
+                    print(
+                        f"  {r['source_name']:38} "
+                        f"sent={r['sent']:3d} (new={r['new_sent']:3d} "
+                        f"update={r['upd_sent']:3d})"
+                    )
+            else:
+                print("  (まだ LINE 送信された event がありません)")
     finally:
         await db.close()
 
