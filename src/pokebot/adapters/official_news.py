@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -13,6 +15,22 @@ from .http import fetch_text
 from .registry import register_adapter
 
 BASE = "https://www.pokemon-card.com"
+
+# 公式 news の <span class="Date Date-small">2026.4.19</span> から日時を抽出
+_DATE_DOT = re.compile(r"(\d{4})\.(\d{1,2})\.(\d{1,2})")
+
+
+def _parse_post_date(a) -> datetime | None:
+    span = a.select_one(".Date, .Date-small, span.Date")
+    if not span:
+        return None
+    m = _DATE_DOT.search(span.get_text())
+    if not m:
+        return None
+    try:
+        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
 
 # タイトルから「抽選」「先着」等のシグナルを拾う
 _SALES_TYPE_KEYWORDS = [
@@ -69,6 +87,7 @@ class PokemonOfficialNewsAdapter(SourceAdapter):
 
             sales_type = _detect_sales_type(title) if has_sales_keyword else "unknown"
             apply_date = parse_jp_datetime(title)
+            post_date = _parse_post_date(a)
             product_name_raw = clean_text(title)
             product_name_normalized = normalize_product_name(title)
 
@@ -82,7 +101,8 @@ class PokemonOfficialNewsAdapter(SourceAdapter):
                 source_name="pokemon_official_news",
                 source_url=url,
                 source_title=title,
+                source_published_at=post_date,
                 raw_snapshot=content_hash(title + "|" + url),
-                extracted_payload={"title": title, "url": url},
+                extracted_payload={"title": title, "url": url, "post_date": str(post_date) if post_date else None},
             ))
         return candidates
