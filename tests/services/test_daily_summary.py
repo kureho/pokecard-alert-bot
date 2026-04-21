@@ -4,6 +4,7 @@ import pytest
 
 from pokebot.services.daily_summary import (
     DailySummaryService,
+    DigestEntry,
     SummarySnapshot,
     format_summary,
 )
@@ -92,6 +93,54 @@ async def test_does_not_fire_before_window(db):
     now = datetime(2026, 4, 21, 8, 59)
     fired = await svc.maybe_run(now=now)
     assert fired is False
+
+
+def test_format_summary_with_digest_shows_candidates():
+    s = SummarySnapshot(
+        active_count=5,
+        notifications_today=2,
+        pending_review_count=1,
+        archived_count=10,
+        failing_sources=[],
+        new_active_last_24h=3,
+    )
+    digest = [
+        DigestEntry(
+            title="アビスアイ招待リクエスト",
+            retailer="amazon",
+            sales_type="invitation",
+            cross_sources=2,
+        ),
+        DigestEntry(
+            title="メガリザードン抽選",
+            retailer="pokemoncenter",
+            sales_type="lottery",
+            cross_sources=1,
+        ),
+    ]
+    msg = format_summary(s, digest=digest)
+    assert "候補 (未確認/2件)" in msg
+    assert "アビスアイ招待リクエスト" in msg
+    # cross_sources>=2 なら [2src] バッジ
+    assert "[2src]" in msg
+    # cross_sources=1 は バッジなし
+    assert "lottery: メガリザードン抽選" in msg
+
+
+def test_format_summary_without_digest_no_section():
+    s = SummarySnapshot(
+        active_count=0,
+        notifications_today=0,
+        pending_review_count=0,
+        archived_count=0,
+        failing_sources=[],
+        new_active_last_24h=0,
+    )
+    msg = format_summary(s, digest=None)
+    assert "候補 (未確認" not in msg
+    # 空リストも同様
+    msg2 = format_summary(s, digest=[])
+    assert "候補 (未確認" not in msg2
 
 
 @pytest.mark.asyncio

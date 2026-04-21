@@ -34,6 +34,16 @@ class SummarySnapshot:
     new_active_last_24h: int
 
 
+@dataclass
+class DigestEntry:
+    """Daily digest の 1 行: 未確認だが注視すべき候補。"""
+
+    title: str
+    retailer: str
+    sales_type: str
+    cross_sources: int  # 同じ product を検出している source 数
+
+
 async def _collect(db: Database, now: datetime) -> SummarySnapshot:
     since_24h = now - timedelta(hours=24)
     async with db.pool.acquire() as conn:
@@ -68,7 +78,49 @@ async def _collect(db: Database, now: datetime) -> SummarySnapshot:
     )
 
 
-def format_summary(snapshot: SummarySnapshot) -> str:
+async def _collect_unconfirmed_digest(
+    db: Database, now: datetime, *, limit: int = 8
+) -> list[DigestEntry]:
+    """直近24h の active event のうち未確認 or 低信頼な候補を列挙する。
+
+    LINE 通知の本文には最終的に 6件程度を載せる想定で、候補として最大 8 件取る。
+    cross_sources は同一 product を検出している distinct source 数。
+    """
+    since_24h = now - timedelta(hours=24)
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT le.canonical_title, le.retailer_name,
+                      le.sales_type, le.product_name_normalized,
+                      le.confidence_score, le.official_confirmation_status,
+                      (
+                        SELECT COUNT(DISTINCT les.source_id)
+                          FROM lottery_event_sources les
+                          JOIN lottery_events le2 ON le2.id = les.lottery_event_id
+                         WHERE le2.product_name_normalized = le.product_name_normalized
+                      ) AS cross_sources
+               FROM lottery_events le
+               WHERE le.status = 'active'
+                 AND le.first_seen_at >= $1
+                 AND (le.official_confirmation_status != 'confirmed'
+                      OR le.confidence_score < 90)
+               ORDER BY le.first_seen_at DESC LIMIT $2""",
+            since_24h, limit,
+        )
+    return [
+        DigestEntry(
+            title=(r["canonical_title"] or "")[:60],
+            retailer=r["retailer_name"] or "-",
+            sales_type=r["sales_type"] or "unknown",
+            cross_sources=r["cross_sources"] or 0,
+        )
+        for r in rows
+    ]
+
+
+def format_summary(
+    snapshot: SummarySnapshot,
+    digest: list[DigestEntry] | None = None,
+) -> str:
     lines = [
         "📊 ポケボット日次サマリ",
         f"active: {snapshot.active_count} 件 (直近24h新規 {snapshot.new_active_last_24h})",
@@ -79,6 +131,12 @@ def format_summary(snapshot: SummarySnapshot) -> str:
         lines.append("▸ 失敗中 (3回以上): " + ", ".join(snapshot.failing_sources))
     else:
         lines.append("▸ 全ソース正常")
+    if digest:
+        lines.append("")
+        lines.append(f"▸ 候補 (未確認/{len(digest)}件):")
+        for d in digest[:6]:
+            badge = f"[{d.cross_sources}src] " if d.cross_sources >= 2 else ""
+            lines.append(f"  {badge}{d.sales_type}: {d.title}")
     return "\n".join(lines)
 
 
@@ -128,7 +186,8 @@ class DailySummaryService:
             return False
 
         snapshot = await _collect(self._db, now)
-        msg = format_summary(snapshot)
+        digest = await _collect_unconfirmed_digest(self._db, now)
+        msg = format_summary(snapshot, digest=digest)
 
         # claim: INSERT ON CONFLICT DO NOTHING. 衝突したら他プロセスが既に処理中。
         async with self._db.pool.acquire() as conn:
