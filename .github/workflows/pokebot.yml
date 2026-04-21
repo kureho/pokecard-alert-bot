@@ -1,9 +1,9 @@
 name: pokebot
 
 on:
-  # schedule は有効化前に段階検証完了必須
-  # schedule:
-  #   - cron: "*/30 * * * *"  # Phase 1 は30分間隔で開始（量を見て再調整）
+  schedule:
+    # 30分間隔。LINE 無料枠 200通/月 ≒ 6.7通/日 を超過しない cap と合わせて運用。
+    - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       job:
@@ -24,7 +24,7 @@ on:
       max_per_run:
         description: "1回の実行で送る最大通知数"
         type: string
-        default: "5"
+        default: "2"
 
 concurrency:
   group: pokebot
@@ -48,7 +48,10 @@ jobs:
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           LOG_LEVEL: INFO
+          # schedule 実行時は inputs が存在せず真偽値扱いで false → '0' (実送信)。
+          # workflow_dispatch 時はユーザー選択 (デフォルト true → '1' で DRY_RUN)。
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
-          MAX_NOTIFY_PER_RUN: ${{ inputs.max_per_run }}
-          MAX_NOTIFY_PER_DAY: "150"
+          MAX_NOTIFY_PER_RUN: ${{ inputs.max_per_run || '2' }}
+          # LINE 無料枠 200/月 ≒ 6.7/日 の安全圏として 6 に制限。
+          MAX_NOTIFY_PER_DAY: "6"
         run: python -m pokebot ${{ inputs.job || 'all' }}

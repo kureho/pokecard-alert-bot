@@ -19,8 +19,9 @@ from ..storage.repos import (
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MAX_PER_RUN = 10
-DEFAULT_MAX_PER_DAY = 150
+DEFAULT_MAX_PER_RUN = 2
+# LINE 無料枠 200通/月 ≒ 6.7/日 の安全圏。月合計 180 まで許容。
+DEFAULT_MAX_PER_DAY = 6
 # 新鮮度: first_seen_at がこの期間内の event のみ通知対象。store_voice feed の過去履歴を除外する。
 DEFAULT_FRESH_WINDOW = timedelta(days=3)
 
