@@ -174,6 +174,19 @@ class NotificationDispatcher:
         source_note = SOURCE_NOTE_BY_RETAILER.get(event.retailer_name, event.retailer_name)
         summary = format_event_message(event, product=product, source_note=source_note)
 
+        # DRY_RUN: notifications テーブルに触れず、would-send ログのみ出す。
+        # これにより本番 run 時に過去の DRY_RUN 予約が suppress 原因にならない。
+        if isinstance(self._notifier, DryRunNotifier):
+            try:
+                await self._notifier.send(summary)
+                if notification_type == "new":
+                    result.new_sent += 1
+                elif notification_type == "update":
+                    result.update_sent += 1
+            except Exception as e:  # noqa: BLE001
+                log.warning("dry_run send failed for event %s: %s", event.id, e)
+            return
+
         claim_id = await self._notif.try_claim(
             lottery_event_id=event.id,
             notification_type=notification_type,
@@ -201,10 +214,7 @@ class NotificationDispatcher:
             log.warning("notification send failed for event %s: %s", event.id, e)
             return
 
-        # DRY_RUN の場合は sent_at を付けずに dedupe_key の予約のみ残す。
-        # cap 計算は sent_at IS NOT NULL をカウントするため、DRY_RUN 分は cap 外になる。
-        if not isinstance(self._notifier, DryRunNotifier):
-            await self._notif.mark_sent(claim_id, now)
+        await self._notif.mark_sent(claim_id, now)
         if notification_type == "new":
             result.new_sent += 1
         elif notification_type == "update":

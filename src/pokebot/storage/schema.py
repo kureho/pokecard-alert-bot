@@ -124,4 +124,12 @@ UPDATE notifications SET sent_at = NULL
 WHERE sent_at IS NOT NULL
   AND sent_at < TIMESTAMP '2026-04-21 07:00:00'
   AND notification_type IN ('new', 'update');
+
+-- 2026-04-21 07:15 cutoff: DRY_RUN で try_claim された空予約 (sent_at IS NULL) を削除。
+-- DRY_RUN は dedupe に触れない実装に変更済みなので、1 度の clear で以降は発生しない。
+-- cutoff 時刻で冪等。seed type は payload_summary 判定なので除外済。
+DELETE FROM notifications
+WHERE sent_at IS NULL
+  AND notification_type IN ('new', 'update')
+  AND created_at < TIMESTAMP '2026-04-21 07:15:00';
 """
