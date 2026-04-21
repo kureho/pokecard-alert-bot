@@ -8,7 +8,7 @@ from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_exponen
 
 from ..lib.confidence import CONFIDENCE_HIGH
 from ..lib.dedupe import build_notification_dedupe_key
-from ..notify.line import Notifier
+from ..notify.line import DryRunNotifier, Notifier
 from ..storage.repos import (
     LotteryEvent,
     LotteryEventRepo,
@@ -201,7 +201,10 @@ class NotificationDispatcher:
             log.warning("notification send failed for event %s: %s", event.id, e)
             return
 
-        await self._notif.mark_sent(claim_id, now)
+        # DRY_RUN の場合は sent_at を付けずに dedupe_key の予約のみ残す。
+        # cap 計算は sent_at IS NOT NULL をカウントするため、DRY_RUN 分は cap 外になる。
+        if not isinstance(self._notifier, DryRunNotifier):
+            await self._notif.mark_sent(claim_id, now)
         if notification_type == "new":
             result.new_sent += 1
         elif notification_type == "update":

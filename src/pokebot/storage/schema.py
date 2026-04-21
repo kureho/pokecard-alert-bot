@@ -111,11 +111,17 @@ WHERE status = 'active' AND sales_type = 'unknown';
 ALTER TABLE notifications ALTER COLUMN lottery_event_id DROP NOT NULL;
 
 -- 2026-04-21: first-run seed の notification_type を 'seed' に分離 (冪等)。
--- cap 計算は type IN ('new','update','deadline','result') のみを対象にするので、
--- seed は自動的にカウント外になる。
 UPDATE notifications SET notification_type = 'seed'
 WHERE payload_summary = '[first-run seed; not sent]' AND notification_type <> 'seed';
--- seed 通知の sent_at も NULL に (実送信ではないため)
+-- seed 通知の sent_at も NULL に。
 UPDATE notifications SET sent_at = NULL
 WHERE notification_type = 'seed' AND sent_at IS NOT NULL;
+
+-- 2026-04-21 07:00 cutoff: DRY_RUN で sent_at マークされていた new/update 通知を
+-- 1 度だけ clear。以降は notifier が DryRunNotifier なら mark_sent をスキップする
+-- ように修正済なので再発なし。time cutoff で冪等。
+UPDATE notifications SET sent_at = NULL
+WHERE sent_at IS NOT NULL
+  AND sent_at < TIMESTAMP '2026-04-21 07:00:00'
+  AND notification_type IN ('new', 'update');
 """
