@@ -83,6 +83,9 @@ async def _run_adapter(source_name: str, source_repo: SourceRepo, now: datetime)
         log.warning("adapter not found: %s", source_name)
         return []
     source = await source_repo.get_by_name(source_name)
+    # Twitter syndication API は連続アクセスで 429 を返すので pacing を入れる
+    if source_name.startswith("twitter_"):
+        await asyncio.sleep(2)
     try:
         candidates = await adapter.run()
         log.info("adapter %s returned %d candidates", source_name, len(candidates))
