@@ -95,7 +95,7 @@ async def test_does_not_fire_before_window(db):
     assert fired is False
 
 
-def test_format_summary_with_digest_shows_candidates():
+def test_format_summary_with_digest_splits_tier_b_and_candidates():
     s = SummarySnapshot(
         active_count=5,
         notifications_today=2,
@@ -110,21 +110,72 @@ def test_format_summary_with_digest_shows_candidates():
             retailer="amazon",
             sales_type="invitation",
             cross_sources=2,
+            confidence_level="confirmed_medium",
         ),
         DigestEntry(
             title="メガリザードン抽選",
             retailer="pokemoncenter",
             sales_type="lottery",
             cross_sources=1,
+            confidence_level="candidate",
         ),
     ]
     msg = format_summary(s, digest=digest)
-    assert "候補 (未確認/2件)" in msg
+    # Tier B セクションが出る
+    assert "要注視 Tier B (1件)" in msg
     assert "アビスアイ招待リクエスト" in msg
+    # 候補セクションは candidate だけ
+    assert "候補 (1件)" in msg
+    assert "メガリザードン抽選" in msg
     # cross_sources>=2 なら [2src] バッジ
     assert "[2src]" in msg
-    # cross_sources=1 は バッジなし
-    assert "lottery: メガリザードン抽選" in msg
+
+
+def test_format_summary_tier_b_only_no_candidate_section():
+    s = SummarySnapshot(
+        active_count=1,
+        notifications_today=0,
+        pending_review_count=0,
+        archived_count=0,
+        failing_sources=[],
+        new_active_last_24h=1,
+    )
+    digest = [
+        DigestEntry(
+            title="メガドリームex",
+            retailer="hobby_station",
+            sales_type="lottery",
+            cross_sources=3,
+            confidence_level="confirmed_medium",
+        ),
+    ]
+    msg = format_summary(s, digest=digest)
+    assert "要注視 Tier B (1件)" in msg
+    assert "候補 (" not in msg
+
+
+def test_format_summary_legacy_digest_without_confidence_level():
+    """confidence_level 未設定の legacy digest entry は 候補セクションに表示。"""
+    s = SummarySnapshot(
+        active_count=1,
+        notifications_today=0,
+        pending_review_count=0,
+        archived_count=0,
+        failing_sources=[],
+        new_active_last_24h=1,
+    )
+    digest = [
+        DigestEntry(
+            title="古いイベント",
+            retailer="misc",
+            sales_type="unknown",
+            cross_sources=1,
+        ),
+    ]
+    msg = format_summary(s, digest=digest)
+    assert "要注視 Tier B" not in msg
+    assert "候補 (1件)" in msg
+    assert "古いイベント" in msg
 
 
 def test_format_summary_without_digest_no_section():
@@ -137,10 +188,12 @@ def test_format_summary_without_digest_no_section():
         new_active_last_24h=0,
     )
     msg = format_summary(s, digest=None)
-    assert "候補 (未確認" not in msg
+    assert "要注視 Tier B" not in msg
+    assert "候補 (" not in msg
     # 空リストも同様
     msg2 = format_summary(s, digest=[])
-    assert "候補 (未確認" not in msg2
+    assert "要注視 Tier B" not in msg2
+    assert "候補 (" not in msg2
 
 
 @pytest.mark.asyncio

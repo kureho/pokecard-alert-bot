@@ -42,6 +42,7 @@ class DigestEntry:
     retailer: str
     sales_type: str
     cross_sources: int  # 同じ product を検出している source 数
+    confidence_level: str | None = None  # Tier 分離用 (confirmed_medium / candidate)
 
 
 async def _collect(db: Database, now: datetime) -> SummarySnapshot:
@@ -79,12 +80,14 @@ async def _collect(db: Database, now: datetime) -> SummarySnapshot:
 
 
 async def _collect_unconfirmed_digest(
-    db: Database, now: datetime, *, limit: int = 8
+    db: Database, now: datetime, *, limit: int = 12
 ) -> list[DigestEntry]:
-    """直近24h の active event のうち未確認 or 低信頼な候補を列挙する。
+    """直近24h の active event のうち confirmed_strong 未満の候補を列挙する。
 
-    LINE 通知の本文には最終的に 6件程度を載せる想定で、候補として最大 8 件取る。
-    cross_sources は同一 product を検出している distinct source 数。
+    confirmed_strong は即時 LINE 通知済みなので digest からは除外。
+    confirmed_medium (Tier B) を優先的に列挙し、candidate は補助的に。
+
+    format_summary 側で Tier B / candidate にセクション分割して表示する。
     """
     since_24h = now - timedelta(hours=24)
     async with db.pool.acquire() as conn:
@@ -92,6 +95,7 @@ async def _collect_unconfirmed_digest(
             """SELECT le.canonical_title, le.retailer_name,
                       le.sales_type, le.product_name_normalized,
                       le.confidence_score, le.official_confirmation_status,
+                      le.confidence_level,
                       (
                         SELECT COUNT(DISTINCT les.source_id)
                           FROM lottery_event_sources les
@@ -101,9 +105,22 @@ async def _collect_unconfirmed_digest(
                FROM lottery_events le
                WHERE le.status = 'active'
                  AND le.first_seen_at >= $1
-                 AND (le.official_confirmation_status != 'confirmed'
-                      OR le.confidence_score < 90)
-               ORDER BY le.first_seen_at DESC LIMIT $2""",
+                 AND (
+                       le.confidence_level IN ('confirmed_medium', 'candidate')
+                       OR (
+                         le.confidence_level IS NULL
+                         AND (le.official_confirmation_status != 'confirmed'
+                              OR le.confidence_score < 90)
+                       )
+                     )
+               ORDER BY
+                   CASE le.confidence_level
+                     WHEN 'confirmed_medium' THEN 0
+                     WHEN 'candidate' THEN 1
+                     ELSE 2
+                   END,
+                   le.first_seen_at DESC
+               LIMIT $2""",
             since_24h, limit,
         )
     return [
@@ -112,6 +129,7 @@ async def _collect_unconfirmed_digest(
             retailer=r["retailer_name"] or "-",
             sales_type=r["sales_type"] or "unknown",
             cross_sources=r["cross_sources"] or 0,
+            confidence_level=r["confidence_level"],
         )
         for r in rows
     ]
@@ -120,6 +138,9 @@ async def _collect_unconfirmed_digest(
 def format_summary(
     snapshot: SummarySnapshot,
     digest: list[DigestEntry] | None = None,
+    *,
+    tier_b_limit: int = 5,
+    candidate_limit: int = 3,
 ) -> str:
     lines = [
         "📊 ポケボット日次サマリ",
@@ -132,11 +153,21 @@ def format_summary(
     else:
         lines.append("▸ 全ソース正常")
     if digest:
-        lines.append("")
-        lines.append(f"▸ 候補 (未確認/{len(digest)}件):")
-        for d in digest[:6]:
-            badge = f"[{d.cross_sources}src] " if d.cross_sources >= 2 else ""
-            lines.append(f"  {badge}{d.sales_type}: {d.title}")
+        # Tier 分離: confirmed_medium を優先して列挙、候補(candidate / legacy)は別枠
+        tier_b = [d for d in digest if d.confidence_level == "confirmed_medium"]
+        others = [d for d in digest if d.confidence_level != "confirmed_medium"]
+        if tier_b:
+            lines.append("")
+            lines.append(f"▸ 要注視 Tier B ({len(tier_b)}件):")
+            for d in tier_b[:tier_b_limit]:
+                badge = f"[{d.cross_sources}src] " if d.cross_sources >= 2 else ""
+                lines.append(f"  {badge}{d.sales_type}: {d.title}")
+        if others:
+            lines.append("")
+            lines.append(f"▸ 候補 ({len(others)}件):")
+            for d in others[:candidate_limit]:
+                badge = f"[{d.cross_sources}src] " if d.cross_sources >= 2 else ""
+                lines.append(f"  {badge}{d.sales_type}: {d.title}")
     return "\n".join(lines)
 
 
