@@ -84,6 +84,9 @@ class LotteryEventUpsertService:
         source_trust = source.trust_score if source else 50
         source_id = source.id if source else None
 
+        body_extracted = bool((candidate.extracted_payload or {}).get("body_fetched"))
+        title_only = not body_extracted
+
         confidence = compute_confidence(
             source_trust_score=source_trust,
             has_product_match=product_match,
@@ -94,8 +97,15 @@ class LotteryEventUpsertService:
             has_store=bool(candidate.store_name),
             has_url=bool(candidate.source_url),
             sales_type_known=candidate.sales_type not in ("unknown", "", None),
-            product_name_ambiguous=not candidate.product_name_normalized,
-            date_missing=(candidate.apply_start_at is None and candidate.apply_end_at is None),
+            product_name_ambiguous=(
+                not candidate.product_name_normalized
+                or len(candidate.product_name_normalized) < 3
+            ),
+            date_missing=(
+                candidate.apply_start_at is None and candidate.apply_end_at is None
+            ),
+            body_extracted=body_extracted,
+            title_only=title_only,
         )
         status = classify_confirmation(
             confidence_score=confidence, source_trust_score=source_trust
@@ -108,6 +118,10 @@ class LotteryEventUpsertService:
             age = now - candidate.source_published_at
             if age > SOURCE_FRESHNESS_WINDOW:
                 event_status = "archived"
+
+        # sales_type=unknown は抽選/先着の判別ができていない → 通知対象外
+        if candidate.sales_type in ("unknown", "", None):
+            event_status = "pending_review"
 
         existing = await self._lottery_repo.find_by_dedupe_key(dedupe_key)
         if existing is None:

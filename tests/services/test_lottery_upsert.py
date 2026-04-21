@@ -30,6 +30,7 @@ def _cand(**kw) -> Candidate:
         raw_snapshot="h1",
         apply_start_at=datetime(2026, 5, 10, 14),
         apply_end_at=datetime(2026, 5, 14, 23, 59),
+        extracted_payload={"body_fetched": True, "title_category": "lottery_active"},
     )
     base.update(kw)
     return Candidate(**base)
@@ -117,6 +118,19 @@ async def test_fresh_announcement_stays_active(db):
     assert out and out.is_new
     events = await LotteryEventRepo(db).list_active(limit=100)
     assert out.event_id in {e.id for e in events}
+
+
+@pytest.mark.asyncio
+async def test_unknown_sales_type_is_pending_review(db):
+    """sales_type=unknown は status=pending_review で active list に載らない。"""
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    c = _cand(sales_type="unknown")
+    out = await svc.apply(c, now=now)
+    assert out and out.is_new
+    # status='pending_review' で active list に載らない
+    events = await LotteryEventRepo(db).list_active(limit=100)
+    assert out.event_id not in {e.id for e in events}
 
 
 @pytest.mark.asyncio

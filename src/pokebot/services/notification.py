@@ -47,6 +47,15 @@ SOURCE_NOTE_BY_RETAILER = {
     "pokemon_official": "ポケモン公式",
 }
 
+# 通知対象の sales_type allowlist。unknown/空は送らない。
+NOTIFY_SALES_TYPES = {
+    "lottery",
+    "preorder_lottery",
+    "first_come",
+    "numbered_ticket",
+    "invitation",
+}
+
 
 def _format_dt(dt: datetime | None) -> str:
     if dt is None:
@@ -130,6 +139,9 @@ class NotificationDispatcher:
         result: NotificationResult,
     ) -> None:
         """1イベントにつき 1 通知を試行。new or update どちらかの1本。"""
+        if event.sales_type not in NOTIFY_SALES_TYPES:
+            result.skipped_low_confidence += 1
+            return
         if event.confidence_score < CONFIDENCE_HIGH:
             result.skipped_low_confidence += 1
             return

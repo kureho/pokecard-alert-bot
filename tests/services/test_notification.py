@@ -52,6 +52,7 @@ async def _create_confirmed_event(db):
         raw_snapshot="h1",
         apply_start_at=datetime(2026, 5, 10, 14),
         apply_end_at=datetime(2026, 5, 14, 23, 59),
+        extracted_payload={"body_fetched": True, "title_category": "lottery_active"},
     )
     out = await svc.apply(c, now=datetime(2026, 4, 21, 12))
     return out.event_id
@@ -107,8 +108,8 @@ async def test_dispatch_respects_per_run_cap(db):
     now = datetime(2026, 4, 21, 12)
     for i in range(3):
         c = Candidate(
-            product_name_raw=f"p{i}",
-            product_name_normalized=f"p{i}",
+            product_name_raw=f"p{i}xx",
+            product_name_normalized=f"p{i}xx",
             retailer_name="pokemoncenter_online",
             sales_type="lottery",
             canonical_title=f"t{i}",
@@ -118,6 +119,7 @@ async def test_dispatch_respects_per_run_cap(db):
             raw_snapshot=f"h{i}",
             apply_start_at=datetime(2026, 5, 10, 14),
             apply_end_at=datetime(2026, 5, 14, 23, 59),
+            extracted_payload={"body_fetched": True, "title_category": "lottery_active"},
         )
         await svc.apply(c, now=now)
     notifier = FakeNotifier()
@@ -147,15 +149,18 @@ async def test_dispatch_skips_unconfirmed(db):
         source_repo=SourceRepo(db),
     )
     c = Candidate(
-        product_name_raw="p",
-        product_name_normalized="p",
+        product_name_raw="pXYZ",
+        product_name_normalized="pXYZ",
         retailer_name="unknown",
-        sales_type="unknown",
+        sales_type="lottery",
         canonical_title="t",
         source_name="low_trust",
         source_url="https://x",
         source_title="t",
         raw_snapshot="h",
+        apply_start_at=datetime(2026, 5, 10, 14),
+        apply_end_at=datetime(2026, 5, 14, 23, 59),
+        extracted_payload={"body_fetched": True, "title_category": "lottery_active"},
     )
     await svc.apply(c, now=datetime(2026, 4, 21, 12))
     notifier = FakeNotifier()
@@ -206,6 +211,37 @@ async def test_dispatch_filters_out_old_events(db):
         max_per_run=10,
         max_per_day=150,
         fresh_window=timedelta(days=3),
+    )
+    result = await disp.dispatch(now=datetime(2026, 4, 21, 12))
+    assert result.new_sent == 0
+    assert notifier.sent == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_skips_unknown_sales_type(db):
+    """sales_type=unknown は pending_review になり、active list に載らない → 送られない。"""
+    await _seed_source(db)
+    svc = LotteryEventUpsertService(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        source_repo=SourceRepo(db),
+    )
+    c = Candidate(
+        product_name_raw="pXYZ", product_name_normalized="pXYZ",
+        retailer_name="pokemoncenter_online", sales_type="unknown",
+        canonical_title="t", source_name="pokemon_official_news",
+        source_url="https://x", source_title="t", raw_snapshot="h",
+        apply_start_at=datetime(2026, 5, 10, 14),
+        apply_end_at=datetime(2026, 5, 14, 23, 59),
+        extracted_payload={"body_fetched": True, "title_category": "sales_method"},
+    )
+    await svc.apply(c, now=datetime(2026, 4, 21, 12))
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
     )
     result = await disp.dispatch(now=datetime(2026, 4, 21, 12))
     assert result.new_sent == 0
