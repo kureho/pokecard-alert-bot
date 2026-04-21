@@ -1,0 +1,359 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime, date
+from typing import Any
+
+from .db import Database
+
+
+@dataclass
+class Product:
+    id: int
+    canonical_name: str
+    normalized_name: str
+    release_date: date | None
+    product_type: str | None
+    official_product_url: str | None
+    official_news_url: str | None
+
+
+@dataclass
+class Source:
+    id: int
+    source_name: str
+    source_type: str
+    base_url: str
+    trust_score: int
+    is_active: bool
+
+
+@dataclass
+class LotteryEvent:
+    id: int
+    product_id: int | None
+    retailer_name: str
+    store_name: str | None
+    canonical_title: str
+    sales_type: str
+    apply_start_at: datetime | None
+    apply_end_at: datetime | None
+    result_at: datetime | None
+    purchase_start_at: datetime | None
+    purchase_end_at: datetime | None
+    purchase_limit_text: str | None
+    conditions_text: str | None
+    source_primary_url: str | None
+    official_confirmation_status: str
+    confidence_score: int
+    dedupe_key: str
+    status: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+
+
+class ProductRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def upsert(
+        self,
+        *,
+        canonical_name: str,
+        normalized_name: str,
+        release_date: date | None = None,
+        product_type: str | None = None,
+        official_product_url: str | None = None,
+        official_news_url: str | None = None,
+    ) -> int:
+        """Return product id. Create if new, update if existing by normalized_name."""
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO products (canonical_name, normalized_name, release_date,
+                       product_type, official_product_url, official_news_url)
+                   VALUES ($1, $2, $3, $4, $5, $6)
+                   ON CONFLICT (normalized_name) DO UPDATE SET
+                       canonical_name = COALESCE(EXCLUDED.canonical_name, products.canonical_name),
+                       release_date = COALESCE(EXCLUDED.release_date, products.release_date),
+                       product_type = COALESCE(EXCLUDED.product_type, products.product_type),
+                       official_product_url = COALESCE(EXCLUDED.official_product_url, products.official_product_url),
+                       official_news_url = COALESCE(EXCLUDED.official_news_url, products.official_news_url),
+                       updated_at = CURRENT_TIMESTAMP
+                   RETURNING id""",
+                canonical_name, normalized_name, release_date,
+                product_type, official_product_url, official_news_url,
+            )
+        return row["id"]
+
+    async def add_alias(self, product_id: int, alias: str, normalized_alias: str) -> None:
+        async with self._db.pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO product_aliases (product_id, alias, normalized_alias)
+                   VALUES ($1, $2, $3) ON CONFLICT (product_id, normalized_alias) DO NOTHING""",
+                product_id, alias, normalized_alias,
+            )
+
+    async def find_by_normalized(self, normalized_name: str) -> Product | None:
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM products WHERE normalized_name = $1", normalized_name
+            )
+            if not row:
+                # Check aliases
+                row = await conn.fetchrow(
+                    """SELECT p.* FROM products p
+                       JOIN product_aliases a ON a.product_id = p.id
+                       WHERE a.normalized_alias = $1 LIMIT 1""",
+                    normalized_name,
+                )
+            if not row:
+                return None
+            return Product(
+                id=row["id"], canonical_name=row["canonical_name"],
+                normalized_name=row["normalized_name"],
+                release_date=row["release_date"], product_type=row["product_type"],
+                official_product_url=row["official_product_url"],
+                official_news_url=row["official_news_url"],
+            )
+
+    async def list_all(self, limit: int = 200) -> list[Product]:
+        async with self._db.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM products ORDER BY release_date DESC NULLS LAST, id DESC LIMIT $1",
+                limit,
+            )
+        return [
+            Product(
+                id=r["id"], canonical_name=r["canonical_name"],
+                normalized_name=r["normalized_name"],
+                release_date=r["release_date"], product_type=r["product_type"],
+                official_product_url=r["official_product_url"],
+                official_news_url=r["official_news_url"],
+            )
+            for r in rows
+        ]
+
+
+class SourceRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def upsert(
+        self,
+        *,
+        source_name: str,
+        source_type: str,
+        base_url: str,
+        trust_score: int,
+        is_active: bool = True,
+    ) -> int:
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO sources (source_name, source_type, base_url, trust_score, is_active)
+                   VALUES ($1, $2, $3, $4, $5)
+                   ON CONFLICT (source_name) DO UPDATE SET
+                       source_type = EXCLUDED.source_type,
+                       base_url = EXCLUDED.base_url,
+                       trust_score = EXCLUDED.trust_score,
+                       is_active = EXCLUDED.is_active,
+                       updated_at = CURRENT_TIMESTAMP
+                   RETURNING id""",
+                source_name, source_type, base_url, trust_score, is_active,
+            )
+        return row["id"]
+
+    async def get_by_name(self, source_name: str) -> Source | None:
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM sources WHERE source_name = $1", source_name
+            )
+        if not row:
+            return None
+        return Source(
+            id=row["id"], source_name=row["source_name"],
+            source_type=row["source_type"], base_url=row["base_url"],
+            trust_score=row["trust_score"], is_active=row["is_active"],
+        )
+
+    async def list_active(self) -> list[Source]:
+        async with self._db.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM sources WHERE is_active = TRUE ORDER BY trust_score DESC"
+            )
+        return [
+            Source(id=r["id"], source_name=r["source_name"],
+                   source_type=r["source_type"], base_url=r["base_url"],
+                   trust_score=r["trust_score"], is_active=r["is_active"])
+            for r in rows
+        ]
+
+    async def record_success(self, source_id: int, at: datetime) -> None:
+        async with self._db.pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE sources SET last_success_at = $1, last_attempt_at = $1,
+                       consecutive_failures = 0, last_error = NULL,
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE id = $2""",
+                at, source_id,
+            )
+
+    async def record_failure(self, source_id: int, at: datetime, err: str) -> None:
+        async with self._db.pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE sources SET last_attempt_at = $1,
+                       consecutive_failures = consecutive_failures + 1,
+                       last_error = $2, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = $3""",
+                at, err, source_id,
+            )
+
+
+class LotteryEventRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    @property
+    def pool(self):
+        return self._db.pool
+
+    async def find_by_dedupe_key(self, dedupe_key: str) -> LotteryEvent | None:
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM lottery_events WHERE dedupe_key = $1", dedupe_key
+            )
+        if not row:
+            return None
+        return self._row_to_event(row)
+
+    async def create(self, **fields: Any) -> int:
+        """Fields: product_id, retailer_name, store_name, canonical_title, sales_type,
+        apply_start_at, apply_end_at, result_at, purchase_start_at, purchase_end_at,
+        purchase_limit_text, conditions_text, source_primary_url, official_confirmation_status,
+        confidence_score, dedupe_key, status"""
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO lottery_events (
+                    product_id, retailer_name, store_name, canonical_title, sales_type,
+                    apply_start_at, apply_end_at, result_at, purchase_start_at, purchase_end_at,
+                    purchase_limit_text, conditions_text, source_primary_url,
+                    official_confirmation_status, confidence_score, dedupe_key, status
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                RETURNING id""",
+                fields.get("product_id"), fields["retailer_name"], fields.get("store_name"),
+                fields["canonical_title"], fields["sales_type"],
+                fields.get("apply_start_at"), fields.get("apply_end_at"), fields.get("result_at"),
+                fields.get("purchase_start_at"), fields.get("purchase_end_at"),
+                fields.get("purchase_limit_text"), fields.get("conditions_text"),
+                fields.get("source_primary_url"),
+                fields.get("official_confirmation_status", "unconfirmed"),
+                fields.get("confidence_score", 0),
+                fields["dedupe_key"],
+                fields.get("status", "active"),
+            )
+        return row["id"]
+
+    async def update(self, event_id: int, **fields: Any) -> None:
+        """Update selected fields and bump updated_at + last_seen_at."""
+        if not fields:
+            return
+        cols = list(fields.keys())
+        placeholders = ", ".join(f"{c} = ${i+2}" for i, c in enumerate(cols))
+        query = (
+            f"UPDATE lottery_events SET {placeholders}, "
+            f"last_seen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
+            f"WHERE id = $1"
+        )
+        values = [fields[c] for c in cols]
+        async with self._db.pool.acquire() as conn:
+            await conn.execute(query, event_id, *values)
+
+    async def touch_last_seen(self, event_id: int, at: datetime) -> None:
+        async with self._db.pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE lottery_events SET last_seen_at = $1 WHERE id = $2",
+                at, event_id,
+            )
+
+    async def list_active(self, limit: int = 100) -> list[LotteryEvent]:
+        async with self._db.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT * FROM lottery_events WHERE status = 'active'
+                   ORDER BY last_seen_at DESC LIMIT $1""",
+                limit,
+            )
+        return [self._row_to_event(r) for r in rows]
+
+    async def add_source_link(
+        self,
+        lottery_event_id: int,
+        source_id: int,
+        *,
+        source_url: str,
+        source_title: str | None,
+        source_published_at: datetime | None,
+        raw_snapshot_hash: str,
+        extracted_payload: dict | None,
+    ) -> None:
+        async with self._db.pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO lottery_event_sources (
+                    lottery_event_id, source_id, source_url, source_title,
+                    source_published_at, raw_snapshot_hash, extracted_payload_json
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+                ON CONFLICT (lottery_event_id, source_id, raw_snapshot_hash) DO NOTHING""",
+                lottery_event_id, source_id, source_url, source_title,
+                source_published_at, raw_snapshot_hash,
+                json.dumps(extracted_payload, ensure_ascii=False, default=str) if extracted_payload else None,
+            )
+
+    @staticmethod
+    def _row_to_event(r) -> LotteryEvent:
+        return LotteryEvent(
+            id=r["id"], product_id=r["product_id"],
+            retailer_name=r["retailer_name"], store_name=r["store_name"],
+            canonical_title=r["canonical_title"], sales_type=r["sales_type"],
+            apply_start_at=r["apply_start_at"], apply_end_at=r["apply_end_at"],
+            result_at=r["result_at"], purchase_start_at=r["purchase_start_at"],
+            purchase_end_at=r["purchase_end_at"],
+            purchase_limit_text=r["purchase_limit_text"],
+            conditions_text=r["conditions_text"],
+            source_primary_url=r["source_primary_url"],
+            official_confirmation_status=r["official_confirmation_status"],
+            confidence_score=r["confidence_score"], dedupe_key=r["dedupe_key"],
+            status=r["status"], first_seen_at=r["first_seen_at"],
+            last_seen_at=r["last_seen_at"],
+        )
+
+
+class NotificationRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def try_claim(
+        self,
+        *,
+        lottery_event_id: int,
+        notification_type: str,
+        channel: str,
+        dedupe_key: str,
+        payload_summary: str,
+    ) -> int | None:
+        """Atomically insert a notification row. Return id if claimed (must send), None if already exists."""
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO notifications (lottery_event_id, notification_type, channel,
+                       dedupe_key, payload_summary)
+                   VALUES ($1, $2, $3, $4, $5)
+                   ON CONFLICT (dedupe_key) DO NOTHING
+                   RETURNING id""",
+                lottery_event_id, notification_type, channel, dedupe_key, payload_summary,
+            )
+        return row["id"] if row else None
+
+    async def mark_sent(self, notification_id: int, at: datetime) -> None:
+        async with self._db.pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE notifications SET sent_at = $1 WHERE id = $2",
+                at, notification_id,
+            )
