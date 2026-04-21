@@ -296,6 +296,70 @@ async def test_dispatch_updates_skips_without_prior_new(db):
     assert result.update_sent == 0
 
 
+@pytest.mark.asyncio
+async def test_dispatch_deadlines_fires_when_apply_end_near(db):
+    """apply_end_at が 3h 以内に迫り、new 送信済みなら deadline 通知が送られる。"""
+    eid = await _create_confirmed_event(db)
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    # 先に new 通知を発火
+    await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
+    assert len(notifier.sent) == 1
+    # apply_end_at を later の 2h後 に書き換え、later から 3h window 内で deadline 呼び出し
+    later = datetime(2026, 4, 21, 14, 0)
+    await LotteryEventRepo(db).update(eid, apply_end_at=later + timedelta(hours=2))
+    result = await disp.dispatch_deadlines(now=later)
+    assert result.update_sent == 1
+    deadline_msg = notifier.sent[-1]
+    assert "⏰" in deadline_msg and "締切" in deadline_msg
+
+
+@pytest.mark.asyncio
+async def test_dispatch_deadlines_skips_without_prior_new(db):
+    """new が未送信の event には deadline も送らない (順序保証)。"""
+    eid = await _create_confirmed_event(db)
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+    )
+    later = datetime(2026, 4, 21, 14, 0)
+    await LotteryEventRepo(db).update(eid, apply_end_at=later + timedelta(hours=2))
+    result = await disp.dispatch_deadlines(now=later)
+    assert result.update_sent == 0
+    assert notifier.sent == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_deadlines_dedup_within_window(db):
+    """同一 event の deadline 通知は dedupe_key で 1 回だけ送信される。"""
+    eid = await _create_confirmed_event(db)
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+    )
+    await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
+    later = datetime(2026, 4, 21, 14, 0)
+    await LotteryEventRepo(db).update(eid, apply_end_at=later + timedelta(hours=2))
+    r1 = await disp.dispatch_deadlines(now=later)
+    r2 = await disp.dispatch_deadlines(now=later + timedelta(minutes=30))
+    assert r1.update_sent == 1
+    assert r2.update_sent == 0
+    assert r2.suppressed == 1
+
+
 def test_format_event_message_has_label():
     from pokebot.storage.repos import LotteryEvent
 

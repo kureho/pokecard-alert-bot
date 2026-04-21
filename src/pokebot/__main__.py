@@ -220,6 +220,14 @@ async def job_notify_dispatch() -> None:
             result.skipped_low_confidence,
         )
 
+        # 締切前 alert (apply_end_at が 3h 以内)
+        deadline_result = await disp.dispatch_deadlines(now=now)
+        log.info(
+            "notify_dispatch_deadlines: deadline=%d suppressed=%d",
+            deadline_result.update_sent,
+            deadline_result.suppressed,
+        )
+
         # Update 通知: 既に new 送信済 event で significant field に変化があったもの
         update_result = await disp.dispatch_updates(now=now)
         log.info(

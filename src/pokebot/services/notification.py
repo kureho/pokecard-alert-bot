@@ -24,6 +24,8 @@ DEFAULT_MAX_PER_RUN = 2
 DEFAULT_MAX_PER_DAY = 6
 # 新鮮度: first_seen_at がこの期間内の event のみ通知対象。store_voice feed の過去履歴を除外する。
 DEFAULT_FRESH_WINDOW = timedelta(days=3)
+# 締切前 alert の window: apply_end_at が「今から何時間以内」なら発火。
+DEFAULT_DEADLINE_WINDOW = timedelta(hours=3)
 
 CONFIRMATION_LABEL = {
     "confirmed": "[高信頼]",
@@ -122,6 +124,7 @@ class NotificationDispatcher:
         max_per_run: int = DEFAULT_MAX_PER_RUN,
         max_per_day: int = DEFAULT_MAX_PER_DAY,
         fresh_window: timedelta = DEFAULT_FRESH_WINDOW,
+        deadline_window: timedelta = DEFAULT_DEADLINE_WINDOW,
     ) -> None:
         self._lottery = lottery_repo
         self._product = product_repo
@@ -130,6 +133,7 @@ class NotificationDispatcher:
         self._max_per_run = max_per_run
         self._max_per_day = max_per_day
         self._fresh_window = fresh_window
+        self._deadline_window = deadline_window
 
     async def dispatch_for_event(
         self,
@@ -330,3 +334,121 @@ class NotificationDispatcher:
             if result.update_sent > before:
                 sent_this_run += 1
         return result
+
+    async def dispatch_deadlines(self, *, now: datetime) -> NotificationResult:
+        """apply_end_at が deadline_window 以内に迫っている confirmed event に
+        対して、1 回だけ「⏰締切前」通知を送る。
+
+        - dedupe: notification_type='deadline' で dedupe_key + 'deadline' unique
+        - 対象: confidence>=90, confirmed, sales_type allowlist 内
+        - new 通知が送信済みの event のみ対象 (new 未送なら「一度も知らせてない事案」
+          なので deadline より先に new を送るべき。その場合は dispatch() で拾われる)
+        """
+        result = NotificationResult()
+        events = await self._lottery.list_ending_soon(
+            now=now, within=self._deadline_window, limit=200
+        )
+        per_day_used = await self._count_sent_today(now)
+        sent_this_run = 0
+        for ev in events:
+            if self._max_per_run is not None and sent_this_run >= self._max_per_run:
+                log.warning("notify_deadlines per-run cap %d reached", self._max_per_run)
+                break
+            if (
+                self._max_per_day is not None
+                and (per_day_used + sent_this_run) >= self._max_per_day
+            ):
+                log.warning(
+                    "notify_deadlines per-day cap %d reached (today=%d)",
+                    self._max_per_day,
+                    per_day_used,
+                )
+                break
+            if not await self._notif.has_notification_sent(
+                lottery_event_id=ev.id, notification_type="new"
+            ):
+                continue
+            before = result.update_sent  # deadline も update_sent にカウント (既存 schema)
+            await self._dispatch_deadline_for_event(ev, now=now, result=result)
+            if result.update_sent > before:
+                sent_this_run += 1
+        return result
+
+    async def _dispatch_deadline_for_event(
+        self, event: LotteryEvent, *, now: datetime, result: NotificationResult
+    ) -> None:
+        """1 event の deadline 通知を送る (新 flow 専用: dedupe, send, mark)。"""
+        if event.sales_type not in NOTIFY_SALES_TYPES:
+            return
+        if event.confidence_score < CONFIDENCE_HIGH:
+            return
+        if event.official_confirmation_status != "confirmed":
+            return
+
+        ndk = build_notification_dedupe_key(
+            lottery_dedupe_key=event.dedupe_key,
+            notification_type="deadline",
+            content_version="v1",
+        )
+        product = None
+        if event.product_id:
+            products = await self._product.list_all(limit=1000)
+            for p in products:
+                if p.id == event.product_id:
+                    product = p
+                    break
+        source_note = SOURCE_NOTE_BY_RETAILER.get(event.retailer_name, event.retailer_name)
+
+        remaining_minutes = max(0, int((event.apply_end_at - now).total_seconds() / 60))
+        remaining_label = (
+            f"{remaining_minutes // 60}時間{remaining_minutes % 60}分"
+            if remaining_minutes >= 60
+            else f"{remaining_minutes}分"
+        )
+        product_name = product.canonical_name if product else event.canonical_title
+        location = event.retailer_name
+        if event.store_name:
+            location = f"{event.retailer_name} / {event.store_name}"
+        summary = "\n".join([
+            f"⏰【応募締切まで残り{remaining_label}】",
+            product_name,
+            location,
+            f"締切: {_format_dt(event.apply_end_at)}",
+            f"情報源: {source_note}" if source_note else "",
+            event.source_primary_url or "",
+        ]).strip()
+
+        if isinstance(self._notifier, DryRunNotifier):
+            try:
+                await self._notifier.send(summary)
+                result.update_sent += 1
+            except Exception as e:  # noqa: BLE001
+                log.warning("dry_run deadline send failed for event %s: %s", event.id, e)
+            return
+
+        claim_id = await self._notif.try_claim(
+            lottery_event_id=event.id,
+            notification_type="deadline",
+            channel="line",
+            dedupe_key=ndk,
+            payload_summary=summary[:500],
+        )
+        if claim_id is None:
+            result.suppressed += 1
+            return
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential(multiplier=1, min=1, max=30),
+                reraise=True,
+            ):
+                with attempt:
+                    await self._notifier.send(summary)
+        except RetryError:
+            log.warning("deadline retry exhausted for event %s", event.id)
+            return
+        except Exception as e:  # noqa: BLE001
+            log.warning("deadline send failed for event %s: %s", event.id, e)
+            return
+        await self._notif.mark_sent(claim_id, now)
+        result.update_sent += 1

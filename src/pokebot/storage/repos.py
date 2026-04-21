@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, date
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from .db import Database
@@ -307,6 +307,29 @@ class LotteryEventRepo:
                    WHERE status = 'active' AND first_seen_at >= $1
                    ORDER BY first_seen_at DESC LIMIT $2""",
                 since, limit,
+            )
+        return [self._row_to_event(r) for r in rows]
+
+    async def list_ending_soon(
+        self,
+        *,
+        now: datetime,
+        within: timedelta,
+        limit: int = 100,
+    ) -> list[LotteryEvent]:
+        """apply_end_at が now から within 以内 (かつ 未過ぎ) の active event。
+
+        締切前 alert の対象。例: within=3h で 3時間以内に締切を迎える抽選。
+        """
+        async with self._db.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT * FROM lottery_events
+                   WHERE status = 'active'
+                     AND apply_end_at IS NOT NULL
+                     AND apply_end_at > $1
+                     AND apply_end_at <= $2
+                   ORDER BY apply_end_at ASC LIMIT $3""",
+                now, now + within, limit,
             )
         return [self._row_to_event(r) for r in rows]
 
