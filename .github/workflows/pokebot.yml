@@ -16,6 +16,7 @@ on:
           - lottery-watch
           - notify-dispatch
           - bootstrap
+          - audit
       dry_run:
         description: "DRY_RUN (LINE送信をログに置換)"
         type: boolean

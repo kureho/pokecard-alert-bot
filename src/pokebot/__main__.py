@@ -224,13 +224,169 @@ async def job_all() -> None:
     await job_notify_dispatch()
 
 
+async def job_audit() -> None:
+    """精度検証用: DB 状態を stdout に詳細 dump する。
+
+    - lottery_events の status/sales_type/confidence 内訳
+    - status 別に各 30件ずつのタイトル/信頼度
+    - 直近の lottery_event_sources (source_published_at, extracted_payload)
+    - notifications の送信履歴
+    """
+    load_dotenv()
+    dsn = os.environ["DATABASE_URL"]
+    db = Database(dsn)
+    await db.init()
+    try:
+        async with db.pool.acquire() as conn:
+            # Status breakdown
+            print("=" * 80)
+            print("# STATUS × SALES_TYPE BREAKDOWN")
+            print("=" * 80)
+            rows = await conn.fetch(
+                """SELECT status, sales_type, COUNT(*) AS c,
+                        AVG(confidence_score)::int AS avg_conf
+                   FROM lottery_events
+                   GROUP BY status, sales_type
+                   ORDER BY status, c DESC"""
+            )
+            for r in rows:
+                print(
+                    f"  {r['status']:17} {r['sales_type']:18} "
+                    f"count={r['c']:4d} avg_conf={r['avg_conf']}"
+                )
+
+            # active events detail
+            print()
+            print("=" * 80)
+            print("# ACTIVE events (通知対象候補):")
+            print("=" * 80)
+            rows = await conn.fetch(
+                """SELECT id, canonical_title, sales_type, confidence_score,
+                        official_confirmation_status, retailer_name, store_name,
+                        apply_start_at, apply_end_at, first_seen_at, source_primary_url
+                   FROM lottery_events WHERE status = 'active'
+                   ORDER BY first_seen_at DESC LIMIT 30"""
+            )
+            for r in rows:
+                loc = r["retailer_name"]
+                if r["store_name"]:
+                    loc = f"{r['retailer_name']}/{r['store_name']}"
+                print(
+                    f"  [{r['id']:>4}] conf={r['confidence_score']:3d} "
+                    f"{r['official_confirmation_status']:12} "
+                    f"{r['sales_type']:18} {loc:35} {r['canonical_title'][:45]}"
+                )
+                print(
+                    f"         apply={r['apply_start_at']}→{r['apply_end_at']} "
+                    f"url={r['source_primary_url']}"
+                )
+
+            # archived sample (published too old)
+            print()
+            print("=" * 80)
+            print("# ARCHIVED events (source_published_at 14日超):")
+            print("=" * 80)
+            rows = await conn.fetch(
+                """SELECT id, canonical_title, sales_type, confidence_score, first_seen_at
+                   FROM lottery_events WHERE status = 'archived'
+                   ORDER BY first_seen_at DESC LIMIT 15"""
+            )
+            for r in rows:
+                print(
+                    f"  [{r['id']:>4}] conf={r['confidence_score']:3d} "
+                    f"{r['sales_type']:18} {r['canonical_title'][:50]}"
+                )
+
+            # pending_review sample (unknown sales_type)
+            print()
+            print("=" * 80)
+            print("# PENDING_REVIEW events (sales_type=unknown):")
+            print("=" * 80)
+            rows = await conn.fetch(
+                """SELECT id, canonical_title, confidence_score, first_seen_at,
+                        source_primary_url
+                   FROM lottery_events WHERE status = 'pending_review'
+                   ORDER BY first_seen_at DESC LIMIT 15"""
+            )
+            for r in rows:
+                print(
+                    f"  [{r['id']:>4}] conf={r['confidence_score']:3d} "
+                    f"{r['canonical_title'][:60]}"
+                )
+                print(f"         url={r['source_primary_url']}")
+
+            # Source extracted payloads sample — 何を抽出できたか
+            print()
+            print("=" * 80)
+            print("# lottery_event_sources 直近10件 (extracted_payload):")
+            print("=" * 80)
+            rows = await conn.fetch(
+                """SELECT les.lottery_event_id, les.source_published_at,
+                        les.extracted_payload_json, le.status, le.canonical_title
+                   FROM lottery_event_sources les
+                   JOIN lottery_events le ON le.id = les.lottery_event_id
+                   ORDER BY les.fetched_at DESC LIMIT 10"""
+            )
+            for r in rows:
+                payload = r["extracted_payload_json"] or "{}"
+                print(f"  event={r['lottery_event_id']} status={r['status']}")
+                print(f"    title={r['canonical_title'][:60]}")
+                print(f"    published={r['source_published_at']}")
+                print(f"    payload={payload[:200]}")
+
+            # Notifications history
+            print()
+            print("=" * 80)
+            print("# notifications 直近15件:")
+            print("=" * 80)
+            rows = await conn.fetch(
+                """SELECT id, lottery_event_id, notification_type, sent_at, payload_summary
+                   FROM notifications ORDER BY created_at DESC LIMIT 15"""
+            )
+            for r in rows:
+                preview = (r["payload_summary"] or "").replace("\n", " | ")[:120]
+                sent = r["sent_at"].isoformat() if r["sent_at"] else "-"
+                print(
+                    f"  [{r['id']:>4}] event={r['lottery_event_id']} "
+                    f"{r['notification_type']:7} sent={sent}"
+                )
+                print(f"    {preview}")
+
+            # sources health
+            print()
+            print("=" * 80)
+            print("# sources 状態:")
+            print("=" * 80)
+            rows = await conn.fetch(
+                "SELECT * FROM sources ORDER BY trust_score DESC, source_name"
+            )
+            for r in rows:
+                succ = r["last_success_at"].isoformat() if r["last_success_at"] else "-"
+                err = (r["last_error"] or "")[:60]
+                print(
+                    f"  {r['source_name']:38} trust={r['trust_score']:3d} "
+                    f"fail={r['consecutive_failures']:3d} success={succ}"
+                )
+                if err:
+                    print(f"    last_error: {err}")
+    finally:
+        await db.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser("pokebot")
     parser.add_argument(
         "job",
         nargs="?",
         default="all",
-        choices=["all", "product-sync", "lottery-watch", "notify-dispatch", "bootstrap"],
+        choices=[
+            "all",
+            "product-sync",
+            "lottery-watch",
+            "notify-dispatch",
+            "bootstrap",
+            "audit",
+        ],
     )
     args = parser.parse_args()
 
@@ -241,6 +397,7 @@ def main() -> None:
         "product-sync": job_product_sync,
         "lottery-watch": job_lottery_watch,
         "notify-dispatch": job_notify_dispatch,
+        "audit": job_audit,
     }
     if args.job == "bootstrap":
 
