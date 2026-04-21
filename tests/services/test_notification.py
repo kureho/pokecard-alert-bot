@@ -339,9 +339,10 @@ async def test_dispatch_suppresses_same_product_other_store(db):
         max_per_day=150,
     )
     result = await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
-    # 最初の 1 件だけ送信、2 件目は同 product cooldown で suppress
+    # content_dedupe_key ベースで 2 店舗の告知は 1 event に統合される。
+    # したがって送信は 1 件、suppressed は 0 (そもそも 2 event にならない)。
     assert result.new_sent == 1
-    assert result.suppressed == 1
+    assert result.suppressed == 0
     assert len(notifier.sent) == 1
 
 

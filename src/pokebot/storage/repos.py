@@ -67,6 +67,9 @@ class LotteryEvent:
     evidence_summary: str | None = None
     retailer_event_id: str | None = None
     confidence_level: str | None = None
+    # retailer/store 非依存の content dedupe key。同一商品・同一応募期間・
+    # 同一 sales_type なら、異なる retailer の告知も 1 event に統合される。
+    content_dedupe_key: str | None = None
 
 
 class ProductRepo:
@@ -248,13 +251,34 @@ class LotteryEventRepo:
             return None
         return self._row_to_event(row)
 
+    async def find_by_content_key(
+        self, content_dedupe_key: str
+    ) -> LotteryEvent | None:
+        """content_dedupe_key で既存 event を検索。
+
+        retailer/store 非依存のため、同じ content_key を持つ event が複数ある可能性がある。
+        その場合は `last_seen_at` が最新のものを返す (通常 1 件だが安全策)。
+        """
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT * FROM lottery_events
+                   WHERE content_dedupe_key = $1
+                   ORDER BY last_seen_at DESC
+                   LIMIT 1""",
+                content_dedupe_key,
+            )
+        if not row:
+            return None
+        return self._row_to_event(row)
+
     async def create(self, **fields: Any) -> int:
         """Fields: product_id, retailer_name, store_name, canonical_title, sales_type,
         apply_start_at, apply_end_at, result_at, purchase_start_at, purchase_end_at,
         purchase_limit_text, conditions_text, source_primary_url, official_confirmation_status,
         confidence_score, dedupe_key, status, product_name_normalized,
         application_url, product_url, entry_method, sale_status, page_fingerprint,
-        evidence_score, evidence_summary, retailer_event_id, confidence_level."""
+        evidence_score, evidence_summary, retailer_event_id, confidence_level,
+        content_dedupe_key."""
         async with self._db.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """INSERT INTO lottery_events (
@@ -265,9 +289,9 @@ class LotteryEventRepo:
                     product_name_normalized,
                     application_url, product_url, entry_method, sale_status,
                     page_fingerprint, evidence_score, evidence_summary,
-                    retailer_event_id, confidence_level
+                    retailer_event_id, confidence_level, content_dedupe_key
                 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
-                          $19,$20,$21,$22,$23,$24,$25,$26,$27)
+                          $19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
                 RETURNING id""",
                 fields.get("product_id"), fields["retailer_name"], fields.get("store_name"),
                 fields["canonical_title"], fields["sales_type"],
@@ -289,6 +313,7 @@ class LotteryEventRepo:
                 fields.get("evidence_summary"),
                 fields.get("retailer_event_id"),
                 fields.get("confidence_level"),
+                fields.get("content_dedupe_key"),
             )
         return row["id"]
 
@@ -390,6 +415,8 @@ class LotteryEventRepo:
         selector_version: str = "",
         canonical_fields: dict | None = None,
         raw_text_excerpt: str = "",
+        retailer_name: str | None = None,
+        store_name: str | None = None,
     ) -> None:
         async with self._db.pool.acquire() as conn:
             await conn.execute(
@@ -397,8 +424,9 @@ class LotteryEventRepo:
                     lottery_event_id, source_id, source_url, source_title,
                     source_published_at, raw_snapshot_hash, extracted_payload_json,
                     evidence_type, evidence_strength, selector_version,
-                    canonical_fields_json, raw_text_excerpt
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                    canonical_fields_json, raw_text_excerpt,
+                    retailer_name, store_name
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
                 ON CONFLICT (lottery_event_id, source_id, raw_snapshot_hash) DO NOTHING""",
                 lottery_event_id, source_id, source_url, source_title,
                 source_published_at, raw_snapshot_hash,
@@ -408,6 +436,8 @@ class LotteryEventRepo:
                 selector_version,
                 json.dumps(canonical_fields, ensure_ascii=False, default=str) if canonical_fields else None,
                 raw_text_excerpt,
+                retailer_name,
+                store_name,
             )
 
     @staticmethod
@@ -444,6 +474,7 @@ class LotteryEventRepo:
             evidence_summary=_g("evidence_summary"),
             retailer_event_id=_g("retailer_event_id"),
             confidence_level=_g("confidence_level"),
+            content_dedupe_key=_g("content_dedupe_key"),
         )
 
     async def list_other_stores_for_product(
@@ -453,20 +484,42 @@ class LotteryEventRepo:
         exclude_event_id: int,
         limit: int = 10,
     ) -> list[tuple[str, str]]:
-        """同じ product の他の active event の (retailer_name, store_name) ペアを返す。
+        """同じ product の他の active event + event_sources 経由の retailer/store を返す。
 
         new 通知時に「他N店舗でも取扱」を追記するための情報取得に使う。
+        dedupe 刷新後は同一 event に複数 retailer が紐付くので、lottery_event_sources
+        から retailer/store を拾う必要がある。event 本体の primary retailer/store と
+        sources の retailer/store を union で返し、重複は排除する。
+
         store_name が NULL の event も拾えるよう COALESCE で空文字に置換する。
         """
         if not product_name_normalized:
             return []
         async with self._db.pool.acquire() as conn:
             rows = await conn.fetch(
-                """SELECT DISTINCT retailer_name, COALESCE(store_name, '') AS store_name
-                   FROM lottery_events
-                   WHERE product_name_normalized = $1
-                     AND status = 'active'
-                     AND id != $2
+                """SELECT DISTINCT retailer_name, store_name FROM (
+                       SELECT le.retailer_name AS retailer_name,
+                              COALESCE(le.store_name, '') AS store_name
+                         FROM lottery_events le
+                        WHERE le.product_name_normalized = $1
+                          AND le.status = 'active'
+                          AND le.id != $2
+                       UNION ALL
+                       SELECT les.retailer_name AS retailer_name,
+                              COALESCE(les.store_name, '') AS store_name
+                         FROM lottery_event_sources les
+                         JOIN lottery_events le2 ON le2.id = les.lottery_event_id
+                        WHERE le2.product_name_normalized = $1
+                          AND le2.status = 'active'
+                          AND les.retailer_name IS NOT NULL
+                          AND (
+                                le2.id != $2
+                                OR les.retailer_name != le2.retailer_name
+                                OR COALESCE(les.store_name, '')
+                                   != COALESCE(le2.store_name, '')
+                              )
+                   ) t
+                   WHERE retailer_name IS NOT NULL
                    ORDER BY retailer_name, store_name
                    LIMIT $3""",
                 product_name_normalized, exclude_event_id, limit,

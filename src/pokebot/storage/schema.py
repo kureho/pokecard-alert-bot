@@ -172,4 +172,18 @@ ALTER TABLE lottery_event_sources ADD COLUMN IF NOT EXISTS evidence_strength INT
 ALTER TABLE lottery_event_sources ADD COLUMN IF NOT EXISTS selector_version TEXT;
 ALTER TABLE lottery_event_sources ADD COLUMN IF NOT EXISTS canonical_fields_json JSONB;
 ALTER TABLE lottery_event_sources ADD COLUMN IF NOT EXISTS raw_text_excerpt TEXT;
+
+-- 2026-04-22 後期: content_dedupe_key を導入 (retailer/store 非依存の content 同一性判定)。
+-- 同じ商品・同じ応募期間・同じ sales_type なら、複数 retailer の告知が来ても 1 event に統合する。
+-- 既存 dedupe_key (retailer 込み, UNIQUE) は残したまま、新 content_dedupe_key は非 unique index のみ。
+ALTER TABLE lottery_events ADD COLUMN IF NOT EXISTS content_dedupe_key TEXT;
+CREATE INDEX IF NOT EXISTS idx_lottery_events_content_dedupe_key
+    ON lottery_events(content_dedupe_key);
+
+-- source link 側に retailer/store を保存 (event 側は primary だけ残すため、
+-- list_other_stores_for_product は source link から復元できるようにする)。
+ALTER TABLE lottery_event_sources ADD COLUMN IF NOT EXISTS retailer_name TEXT;
+ALTER TABLE lottery_event_sources ADD COLUMN IF NOT EXISTS store_name TEXT;
+CREATE INDEX IF NOT EXISTS idx_lottery_event_sources_retailer
+    ON lottery_event_sources(lottery_event_id, retailer_name);
 """

@@ -11,7 +11,7 @@ from ..lib.confidence import (
     evaluate_evidence,
     map_to_legacy_status,
 )
-from ..lib.dedupe import build_lottery_dedupe_key
+from ..lib.dedupe import build_content_dedupe_key, build_lottery_dedupe_key
 from ..lib.normalize import normalize_retailer, normalize_store
 from ..lib.snapshot import page_fingerprint
 from ..storage.repos import LotteryEventRepo, ProductRepo, SourceRepo
@@ -110,14 +110,30 @@ class LotteryEventUpsertService:
             apply_start_at=candidate.apply_start_at,
             apply_end_at=candidate.apply_end_at,
         )
+        # content_dedupe_key: retailer/store 非依存。同一商品・同一期間・同一 sales_type
+        # なら他 retailer の告知も同一 event に集約するためのキー。
+        content_key = build_content_dedupe_key(
+            normalized_product=candidate.product_name_normalized or "-",
+            sales_type=candidate.sales_type or "unknown",
+            apply_start_at=candidate.apply_start_at,
+            apply_end_at=candidate.apply_end_at,
+        )
 
         source = await self._source_repo.get_by_name(candidate.source_name)
         source_id = source.id if source else None
 
         title_only = not bool(payload.get("body_fetched"))
 
-        # クロスソース corroboration: 同一 product が他ソースで検出されているか。
+        # 既存 event 検索:
+        # 1) legacy dedupe_key (retailer 込み) で同一 retailer の既存を先に探す
+        # 2) 見つからなければ content_dedupe_key で retailer 跨ぎの同一告知を探す
+        # content_key は apply_start/end が両方 None の場合 (product + sales_type のみ)
+        # 衝突しやすいので、期間情報が少なくとも1つある場合に限り検索する。
         existing = await self._lottery_repo.find_by_dedupe_key(dedupe_key)
+        if existing is None and (
+            candidate.apply_start_at is not None or candidate.apply_end_at is not None
+        ) and candidate.product_name_normalized:
+            existing = await self._lottery_repo.find_by_content_key(content_key)
         cross_source_count = await self._lottery_repo.count_distinct_sources_for_product(
             candidate.product_name_normalized,
             exclude_event_id=existing.id if existing else None,
@@ -202,6 +218,8 @@ class LotteryEventUpsertService:
             selector_version=candidate.selector_version or "",
             canonical_fields=candidate.canonical_fields or None,
             raw_text_excerpt=(candidate.raw_text_excerpt or "")[:2000],
+            retailer_name=candidate.retailer_name or None,
+            store_name=candidate.store_name or None,
         )
 
         if existing is None:
@@ -233,6 +251,7 @@ class LotteryEventUpsertService:
                 evidence_summary=evidence_summary,
                 retailer_event_id=candidate.retailer_event_id,
                 confidence_level=level.value,
+                content_dedupe_key=content_key,
             )
             if source_id:
                 await self._lottery_repo.add_source_link(
@@ -280,6 +299,9 @@ class LotteryEventUpsertService:
             updates["sale_status"] = sale_status
         if existing.page_fingerprint is None:
             updates["page_fingerprint"] = page_fp
+        # content_dedupe_key は NULL の既存 event に遡及で付与する (migration 的役割)
+        if existing.content_dedupe_key is None:
+            updates["content_dedupe_key"] = content_key
         if existing.retailer_event_id is None and candidate.retailer_event_id:
             updates["retailer_event_id"] = candidate.retailer_event_id
 

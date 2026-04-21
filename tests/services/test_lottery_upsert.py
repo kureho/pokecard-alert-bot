@@ -167,7 +167,8 @@ async def test_cross_source_corroboration_boosts_confidence(db):
     out1 = await svc.apply(c1, now=now)
     assert out1 and out1.is_new
 
-    # 2件目: Twitter 側で別 retailer/store → 別 dedupe_key。product は同じ。
+    # 2件目: Twitter 側で別 retailer/store。product + 応募期間が同じなので、
+    # content_dedupe_key ベースで既存 event に統合される (is_new=False)。
     c2 = _cand(
         product_name_normalized="アビスアイ",
         retailer_name="amazon",
@@ -179,15 +180,15 @@ async def test_cross_source_corroboration_boosts_confidence(db):
         application_url=None,
     )
     out2 = await svc.apply(c2, now=now)
-    assert out2 and out2.is_new
-    # Dispatch1: Twitter (social_post) 側の evidence_score:
-    #   base 10 + 10 (apply_start) + 5 (apply_end) + 5 (retailer) + 3 (store)
-    #   + 2 (url) + 5 (sales_type_known) + 5 (cross_source_count=1)
-    #   = 45 → CANDIDATE
-    ev2 = await LotteryEventRepo(db).find_by_dedupe_key(out2.dedupe_key)
-    assert ev2.confidence_level == "candidate"
-    # cross_source 加点が乗っていることは confidence_score のほうで確認 (social 単独なら 40)
-    assert ev2.confidence_score == 45
+    # 同一 event への統合: is_new=False、source link は追加されている。
+    assert out2 and not out2.is_new
+    assert out2.event_id == out1.event_id
+    # 2 つの異なる source_id が event_sources に紐付いていることを確認
+    cnt = await LotteryEventRepo(db).count_distinct_sources_for_product("アビスアイ")
+    assert cnt == 2
+    # 既存 event の confidence_level は official 側の confirmed_strong を維持
+    ev1 = await LotteryEventRepo(db).find_by_dedupe_key(out1.dedupe_key)
+    assert ev1.confidence_level == "confirmed_strong"
 
 
 @pytest.mark.asyncio
