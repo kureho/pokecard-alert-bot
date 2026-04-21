@@ -23,6 +23,7 @@ on:
           - notify-dispatch
           - bootstrap
           - audit
+          - archive-non-tokyo-metro
       dry_run:
         description: "DRY_RUN (LINE送信をログに置換)"
         type: boolean
@@ -31,6 +32,10 @@ on:
         description: "1回の実行で送る最大通知数"
         type: string
         default: "2"
+      cleanup_execute:
+        description: "archive-non-tokyo-metro job で実際にUPDATEする (false=dry-run)"
+        type: boolean
+        default: false
 
 # Fast と Full は DB 側の ON CONFLICT / dedupe で安全に並列可能だが、
 # 同じ SELECT → INSERT を同時に走らせると UNIQUE 競合で片側失敗するため、
@@ -83,4 +88,8 @@ jobs:
           MAX_NOTIFY_PER_RUN: ${{ inputs.max_per_run || '2' }}
           # LINE 無料枠 200/月 ≒ 6.7/日 の安全圏として 6 に制限。
           MAX_NOTIFY_PER_DAY: "6"
+          # archive-non-tokyo-metro job 用: true の時だけ実際に UPDATE、
+          # それ以外は dry-run (件数とサンプル print のみ、DB 変更なし)。
+          # 他 job には影響しない (env が未使用なので無視される)。
+          CLEANUP_EXECUTE: ${{ inputs.cleanup_execute && '1' || '0' }}
         run: python -m pokebot ${{ steps.job.outputs.name }}

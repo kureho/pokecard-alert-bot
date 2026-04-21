@@ -612,6 +612,26 @@ class NotificationRepo:
             )
         return row["last_sent"] if row and row["last_sent"] else None
 
+    async def has_sent_with_summary(
+        self, *, lottery_event_id: int, summary: str
+    ) -> bool:
+        """指定 event に対して、同一 payload_summary で sent 済みの通知が存在するか。
+
+        告知内容 (メッセージ文面) が変わっていない update を抑止するために使う。
+        new / update / deadline を横断して判定する (LINE に届く通知種別を全て対象)。
+        """
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT 1 FROM notifications
+                   WHERE lottery_event_id = $1
+                     AND payload_summary = $2
+                     AND sent_at IS NOT NULL
+                     AND notification_type IN ('new', 'update', 'deadline', 'result')
+                   LIMIT 1""",
+                lottery_event_id, summary,
+            )
+        return row is not None
+
     async def get_last_sent_for_product(
         self,
         *,

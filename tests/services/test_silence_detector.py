@@ -79,6 +79,28 @@ async def test_no_warn_if_healthy(db):
 
 
 @pytest.mark.asyncio
+async def test_suppressed_during_quiet_hours(db):
+    """quiet hours (21-10時) の間は監視アラートも送らない。"""
+    srepo = SourceRepo(db)
+    sid = await srepo.upsert(
+        source_name="flaky_night",
+        source_type="retailer_lottery",
+        base_url="https://x",
+        trust_score=90,
+    )
+    night = datetime(2026, 4, 21, 23, 0)  # 抑止帯
+    for i in range(6):
+        await srepo.record_failure(sid, night - timedelta(minutes=i), "boom")
+    det = SilenceDetector(
+        db=db,
+        notification_repo=NotificationRepo(db),
+        notifier=FakeNotifier(),
+    )
+    sent = await det.tick(now=night)
+    assert sent == 0
+
+
+@pytest.mark.asyncio
 async def test_warns_after_debounce_window(db):
     """24h 経過後は再警告する。"""
     srepo = SourceRepo(db)

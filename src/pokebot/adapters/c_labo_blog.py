@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 
 from ..lib.body_extractor import extract_body_info
 from ..lib.normalize import normalize_product_name
+from ..lib.region import is_clabo_tokyo_metro
 from ..lib.snapshot import content_hash
 from ..lib.text_clean import clean_text
 from ..lib.title_classifier import TitleCategory, classify_title
@@ -19,14 +20,22 @@ log = logging.getLogger(__name__)
 BASE = "https://www.c-labo.jp"
 URL = f"{BASE}/blog/"
 
-# shop slug を店舗名に再マッピング (unknown はそのまま slug を使う)
+# shop slug を店舗名に再マッピング。region.py の Tokyo-metro allowlist と
+# 1都3県分は必ず一致させること (フォールバック名で通知されないように)。
 _SHOP_DISPLAY = {
+    # 東京都
     "akihabara": "カードラボ秋葉原",
     "stakihabara": "カードラボ秋葉原2号店",
     "shinjuku": "カードラボ新宿",
     "ikebukuro": "カードラボ池袋",
     "shibuya": "カードラボ渋谷",
+    # 神奈川
     "yokohama": "カードラボ横浜",
+    # 埼玉
+    "tokorozawa": "カードラボ所沢",
+    # 千葉
+    "tsudanuma": "カードラボ津田沼",
+    # 以下は allowlist 外 (通知対象外)。将来 allowlist を広げた場合の display 用に残す。
     "nagoya": "カードラボ名古屋",
     "nagoyaekimae": "カードラボ名古屋駅前",
     "nagoyaoosu": "カードラボ名古屋大須",
@@ -43,6 +52,7 @@ _SHOP_DISPLAY = {
     "gifu": "カードラボ岐阜",
     "sendai": "カードラボ仙台",
     "sapporo": "カードラボ札幌",
+    "otaro": "カードラボ小樽",
 }
 
 _POKEMON_KEYWORDS = ("ポケモンカード", "ポケモンカードゲーム", "ポケカ")
@@ -106,6 +116,9 @@ class CLaboBlogAdapter(SourceAdapter):
                     continue
 
             shop_slug, store_display = _extract_shop(href)
+            # 東京近郊 (1都3県) 以外の店舗は通知対象外。body fetch もしない。
+            if not is_clabo_tokyo_metro(shop_slug):
+                continue
             url = urljoin(BASE, href)
 
             # 商品名抽出: title から「抽選販売のお知らせ」「抽選予約販売のお知らせ」等を削除

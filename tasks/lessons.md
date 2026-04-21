@@ -55,3 +55,37 @@
 - ヨドバシカメラ (403 for US IP): Twitter `@Yodobashi` 経由が現実的
 - エディオン (TOP 直 link なし): 告知が不定期・Twitter `@edion_official` 経由が現実的
 - あみあみ (403 for US IP): 代替経路検討
+
+## 2026-04-22 update 通知が同一内容で 6時間ごとに再発火 (カードラボ浜松事案)
+
+### 何が起きたか
+- ユーザーから「カードラボ浜松の通知がめっちゃ来る」報告
+- 同じ告知 (同じ商品・同じ応募期間) の update 通知が 6 時間おきに LINE に届いていた
+- 1 event につき最大 4回/日、MAX_NOTIFY_PER_DAY=6 の枠を特定店舗で消化
+
+### 根本原因
+`services/notification.py` で update 通知の dedupe_key 生成に `last_seen_at` を使っていた:
+```python
+content_version = event.last_seen_at.isoformat(timespec="minutes")
+```
+`last_seen_at` はスクレイプ毎に `CURRENT_TIMESTAMP` へ bump されるため、内容が全く変わっていなくても 6時間 (UPDATE_COOLDOWN) 経過ごとに dedupe_key が更新され、`try_claim` が成功し再送される構造だった。
+
+### 再発防止ルール
+- **通知 dedupe_key の content_version は "ユーザーに見える情報" (商品名・期間・sales_type・status・条件) のハッシュから組む。内部タイムスタンプ (last_seen_at / updated_at) は絶対に含めない**
+- **update 通知では「同一 payload_summary が既に sent 済みか」を try_claim 前に確認する**。万一 dedupe_key 設計が崩れても、文面ベースで二重送信を防げる
+- cooldown (時間ベース) は最大頻度の上限であり、**内容不変ならそもそも発火しない**ことを保証する設計が正しい
+
+### 類似パターンで確認すべき箇所
+- `deadline` / `result` など今後追加する通知 type でも、content_version を時刻由来にしない
+- schema の `first_seen_at` と `last_seen_at` を混同しない (first は通知の鮮度判定用、last は再観測用で**両者はユーザー向け情報ではない**)
+
+## 2026-04-22 quiet hours (21:00-10:00 JST) 導入
+
+### 背景
+ユーザー要望「夜21時から朝10時までは送らないで」。睡眠中に LINE 通知で起こされないように、全 LINE 送信経路に共通で時間帯抑止をかける。
+
+### 設計のポイント
+- **純粋関数** `lib/quiet_hours.is_quiet_hours(now: datetime)` として切り出し、dispatcher 側は 1 行でガードするだけに留める
+- **抑止対象は全 LINE 通知** (new / update / deadline / daily_summary / silence)。一部だけ抑止すると「夜中に監視アラートで起きる」「早朝に daily summary で起きる」といった抜けが残る
+- **daily_summary の既定時刻を 10:00 に変更** (09:00 のままだと quiet hours 内で永久に発火しない)
+- **GHA TZ=Asia/Tokyo 前提**。hour 判定は naive datetime を使うので、TZ 設定が外れると境界がズレる。TZ=Asia/Tokyo が deploy ルール化されていることが前提

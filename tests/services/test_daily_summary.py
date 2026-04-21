@@ -56,9 +56,9 @@ async def test_fires_in_target_window(db):
         db=db,
         notification_repo=NotificationRepo(db),
         notifier=notifier,
-        hhmm="09:00",
+        hhmm="12:00",
     )
-    now = datetime(2026, 4, 21, 9, 10)  # 窓内
+    now = datetime(2026, 4, 21, 12, 10)  # 窓内
     fired = await svc.maybe_run(now=now)
     assert fired is True
     assert len(notifier.sent) == 1
@@ -72,7 +72,7 @@ async def test_does_not_fire_outside_window(db):
         db=db,
         notification_repo=NotificationRepo(db),
         notifier=notifier,
-        hhmm="09:00",
+        hhmm="12:00",
     )
     now = datetime(2026, 4, 21, 15, 0)  # 窓外
     fired = await svc.maybe_run(now=now)
@@ -87,10 +87,10 @@ async def test_does_not_fire_before_window(db):
         db=db,
         notification_repo=NotificationRepo(db),
         notifier=notifier,
-        hhmm="09:00",
+        hhmm="12:00",
     )
-    # 08:59 は target より前
-    now = datetime(2026, 4, 21, 8, 59)
+    # 11:59 は target より前
+    now = datetime(2026, 4, 21, 11, 59)
     fired = await svc.maybe_run(now=now)
     assert fired is False
 
@@ -197,15 +197,35 @@ def test_format_summary_without_digest_no_section():
 
 
 @pytest.mark.asyncio
+async def test_does_not_fire_during_quiet_hours(db):
+    """target が quiet hours (21-10時) の中でも fire しない。
+
+    既定 target=10:00 にして、now を quiet hours 内 (09:30) にしても
+    maybe_run は False を返す。
+    """
+    notifier = FakeNotifier()
+    svc = DailySummaryService(
+        db=db,
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        hhmm="09:30",  # 古い設定との互換を想定し、抑止帯内の target でも安全に止まる
+    )
+    now = datetime(2026, 4, 21, 9, 40)  # target 後 10 分 = 窓内だが quiet hours
+    fired = await svc.maybe_run(now=now)
+    assert fired is False
+    assert notifier.sent == []
+
+
+@pytest.mark.asyncio
 async def test_does_not_double_fire(db):
     notifier = FakeNotifier()
     svc = DailySummaryService(
         db=db,
         notification_repo=NotificationRepo(db),
         notifier=notifier,
-        hhmm="09:00",
+        hhmm="12:00",
     )
-    now = datetime(2026, 4, 21, 9, 10)
+    now = datetime(2026, 4, 21, 12, 10)
     await svc.maybe_run(now=now)
     # 同じ日に再呼び出し (5分後、まだ窓内)
     await svc.maybe_run(now=now + timedelta(minutes=5))

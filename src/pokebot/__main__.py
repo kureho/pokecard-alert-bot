@@ -276,7 +276,9 @@ async def job_notify_dispatch() -> None:
         # Daily summary (JST 09:00 窓で 1日1回)
         from .services.daily_summary import DailySummaryService
 
-        hhmm = os.environ.get("DAILY_REPORT_JST", "09:00")
+        # quiet hours (21:00-10:00 JST) の外に target を置く必要がある。
+        # デフォルト 10:00 = quiet hours 明け直後。override するなら 10:00-20:30 の範囲で。
+        hhmm = os.environ.get("DAILY_REPORT_JST", "10:00")
         summary = DailySummaryService(
             db=db,
             notification_repo=NotificationRepo(db),
@@ -567,6 +569,149 @@ async def job_audit() -> None:
         await db.close()
 
 
+async def _compute_tokyo_metro_allowed_store_names() -> dict[str, set[str]]:
+    """retailer_name -> 通知対象とする store_name の集合。
+
+    region.py の slug allowlist と各 adapter の display 名マッピングから
+    導出することで、region.py の編集だけで allowlist 変更が一箇所で完結する。
+    """
+    # adapter モジュールは import 時に register されるが、このタイミングで
+    # 内部定数を参照する (循環 import は起きない: 各 adapter は pokebot.lib
+    # だけを見ている)。
+    from .adapters.c_labo_blog import _SHOP_DISPLAY as CLABO_DISPLAY
+    from .adapters.pokecen_store_voice import SHOPS as POKECEN_SHOPS
+    from .lib.region import (
+        CLABO_TOKYO_METRO_SLUGS,
+        POKECEN_TOKYO_METRO_SHOPS,
+    )
+
+    clabo_allowed = {
+        CLABO_DISPLAY[slug]
+        for slug in CLABO_TOKYO_METRO_SLUGS
+        if slug in CLABO_DISPLAY
+    }
+    pokecen_allowed = {
+        f"ポケモンセンター{display}"
+        for key, display in POKECEN_SHOPS
+        if key in POKECEN_TOKYO_METRO_SHOPS
+    }
+    return {"cardlabo": clabo_allowed, "pokemoncenter": pokecen_allowed}
+
+
+async def archive_non_tokyo_metro(
+    db: Database, *, execute: bool
+) -> tuple[int, list[dict]]:
+    """東京近郊 allowlist 外の active event を archived に更新する。
+
+    - execute=False: dry-run。対象を列挙するだけで DB は変更しない。
+    - execute=True:  対象を status='archived' に UPDATE。
+
+    Returns: (対象件数, 対象レコードのリスト)
+
+    安全性:
+    - 削除ではなく status 遷移なので、ロールバックは SQL 一発 (ACCEPTANCE.md 参照)
+    - status='active' な event だけが対象。archived/pending_review/ended は触らない
+    - allowlist に store_name が一致しない場合のみ archive (store_name IS NULL や
+      chain-wide event は一致しないので触らない — retailer で絞り込む)
+    - 冪等: 既に archived のものは次回以降対象にならない
+    """
+    allowed = await _compute_tokyo_metro_allowed_store_names()
+    target_retailers = list(allowed.keys())
+
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT id, retailer_name, store_name, canonical_title,
+                      sales_type, first_seen_at
+               FROM lottery_events
+               WHERE retailer_name = ANY($1::text[])
+                 AND status = 'active'
+               ORDER BY retailer_name, store_name, id""",
+            target_retailers,
+        )
+
+    to_archive: list[dict] = []
+    for r in rows:
+        retailer = r["retailer_name"]
+        store = r["store_name"]
+        # store_name が NULL の event は chain-wide 告知として温存する
+        # (retailer 全店舗向けの公式告知など。誤 archive を防ぐ保守的判定)
+        if store is None or store == "":
+            continue
+        if store in allowed.get(retailer, set()):
+            continue
+        to_archive.append(dict(r))
+
+    if execute and to_archive:
+        ids = [r["id"] for r in to_archive]
+        async with db.pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE lottery_events
+                   SET status = 'archived', updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ANY($1::bigint[]) AND status = 'active'""",
+                ids,
+            )
+
+    return len(to_archive), to_archive
+
+
+async def job_archive_non_tokyo_metro() -> None:
+    """東京近郊 allowlist 外の既存 active event を archived に移す cleanup job。
+
+    GHA 側で CLEANUP_EXECUTE=1 がセットされた時だけ実際に UPDATE する。
+    それ以外は dry-run (件数と詳細 print のみ、DB 変更なし)。
+    """
+    load_dotenv()
+    dsn = os.environ["DATABASE_URL"]
+    db = Database(dsn)
+    await db.init()
+    try:
+        execute = os.environ.get("CLEANUP_EXECUTE", "").lower() in ("1", "true", "yes")
+
+        count, targets = await archive_non_tokyo_metro(db, execute=execute)
+
+        mode = "EXECUTE" if execute else "DRY-RUN"
+        print("=" * 72)
+        print(f"# archive-non-tokyo-metro ({mode})")
+        print("=" * 72)
+        print(f"対象 (allowlist 外の active event): {count} 件")
+
+        by_store: dict[tuple[str, str], int] = {}
+        for r in targets:
+            key = (r["retailer_name"], r["store_name"])
+            by_store[key] = by_store.get(key, 0) + 1
+        if by_store:
+            print("\n[retailer / store ごとの件数]")
+            for (retailer, store), c in sorted(
+                by_store.items(), key=lambda kv: (-kv[1], kv[0])
+            ):
+                print(f"  {retailer:15} / {store:20} : {c} 件")
+
+        if targets:
+            print("\n[個別レコード (先頭30件)]")
+            for r in targets[:30]:
+                title = (r["canonical_title"] or "")[:55]
+                first_seen = (
+                    r["first_seen_at"].isoformat() if r["first_seen_at"] else "-"
+                )
+                print(
+                    f"  [{r['id']:>5}] {r['retailer_name']:12} / "
+                    f"{r['store_name']:18} {first_seen} {title}"
+                )
+            if len(targets) > 30:
+                print(f"  ... 他 {len(targets) - 30} 件")
+
+        if execute:
+            print(f"\n✅ {count} 件を status='archived' に更新しました。")
+            print("ロールバック: deploy/ACCEPTANCE.md の「archive rollback」参照")
+        else:
+            print(
+                "\nℹ️  dry-run mode。実際に更新するには workflow_dispatch で "
+                "cleanup_execute=true を選択してください。"
+            )
+    finally:
+        await db.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser("pokebot")
     parser.add_argument(
@@ -582,6 +727,7 @@ def main() -> None:
             "notify-dispatch",
             "bootstrap",
             "audit",
+            "archive-non-tokyo-metro",
         ],
     )
     args = parser.parse_args()
@@ -596,6 +742,7 @@ def main() -> None:
         "lottery-watch-fast": job_lottery_watch_fast,
         "notify-dispatch": job_notify_dispatch,
         "audit": job_audit,
+        "archive-non-tokyo-metro": job_archive_non_tokyo_metro,
     }
     if args.job == "bootstrap":
 

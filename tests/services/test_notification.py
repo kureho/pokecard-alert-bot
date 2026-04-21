@@ -278,6 +278,60 @@ async def test_dispatch_updates_fires_for_extended_event(db):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_updates_suppresses_when_content_unchanged(db):
+    """re-scrape で last_seen_at が bump されても、告知内容が変わらなければ
+    update 通知は発火しない。cooldown 超えの再巡回でも、同一内容なら dedupe_key
+    衝突で try_claim が None を返す。
+
+    浜松カードラボのように高頻度スクレイプされる店舗で、同じ内容の update 通知が
+    6時間ごとに繰り返されていた事象の再現テスト。
+    """
+    eid = await _create_confirmed_event(db)
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    # new 通知を発火
+    await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
+    assert len(notifier.sent) == 1
+
+    # スクレイプで last_seen_at / updated_at が bump されるのを再現
+    # (実体は lottery_upsert 側の touch_last_seen / update 呼び出し)
+    async with db.pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE lottery_events SET last_seen_at = $1, updated_at = $1 "
+            "WHERE id = $2",
+            datetime(2026, 4, 21, 19, 0), eid,
+        )
+
+    # 1 回目の update dispatch (cooldown 超え) → 内容が実質変わっていなければ送らない
+    r1 = await disp.dispatch_updates(now=datetime(2026, 4, 21, 19, 10))
+    # さらに翌日 quiet-hours 外 (11:00 台) で再度 last_seen_at だけ bump
+    async with db.pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE lottery_events SET last_seen_at = $1, updated_at = $1 "
+            "WHERE id = $2",
+            datetime(2026, 4, 22, 11, 0), eid,
+        )
+    r2 = await disp.dispatch_updates(now=datetime(2026, 4, 22, 11, 10))
+
+    # どちらも告知内容は変わっていないので update は送られない
+    assert r1.update_sent == 0, (
+        "内容未変更の event に update を送ってはいけない (1回目)"
+    )
+    assert r2.update_sent == 0, (
+        "内容未変更の event に update を送ってはいけない (2回目)"
+    )
+    # LINE 送信は new 1件のみ
+    assert len(notifier.sent) == 1
+
+
+@pytest.mark.asyncio
 async def test_dispatch_updates_skips_without_prior_new(db):
     """new 通知未送信の event には update 通知を送らない。"""
     eid = await _create_confirmed_event(db)
@@ -771,3 +825,83 @@ async def test_dispatch_legacy_fallback_skips_low_score(db):
     result = await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
     assert result.new_sent == 0
     assert result.skipped_low_confidence >= 1
+
+
+# ===== 通知抑止時間帯 (21:00-10:00 JST) =====
+
+
+@pytest.mark.asyncio
+async def test_dispatch_suppressed_during_quiet_hours(db):
+    """夜 21:00 〜 翌朝 10:00 の間、new 通知は送らない。"""
+    await _create_confirmed_event(db)
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    # 22:00 は抑止帯
+    r_night = await disp.dispatch(now=datetime(2026, 4, 21, 22, 0))
+    assert r_night.new_sent == 0
+    assert notifier.sent == []
+
+    # 翌朝 10:05 は送信可
+    r_morning = await disp.dispatch(now=datetime(2026, 4, 22, 10, 5))
+    assert r_morning.new_sent == 1
+    assert len(notifier.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_updates_suppressed_during_quiet_hours(db):
+    """update も夜間は送らない。"""
+    eid = await _create_confirmed_event(db)
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    # new を日中に送っておく
+    await disp.dispatch(now=datetime(2026, 4, 21, 12, 0))
+    assert len(notifier.sent) == 1
+    # apply_end_at を延長 (意味差分)
+    await LotteryEventRepo(db).update(
+        eid, apply_end_at=datetime(2026, 5, 20, 23, 59),
+    )
+    # 23:00 は抑止帯 → update 送られない
+    r_night = await disp.dispatch_updates(now=datetime(2026, 4, 21, 23, 0))
+    assert r_night.update_sent == 0
+    assert len(notifier.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_deadlines_suppressed_during_quiet_hours(db):
+    """deadline も夜間は送らない。"""
+    eid = await _create_confirmed_event(db)
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    # 先に new を昼間に送る
+    await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
+    assert len(notifier.sent) == 1
+    # 深夜 03:00 を now にして、deadline 2h 後に迫っている状態を作る
+    late_night = datetime(2026, 4, 22, 3, 0)
+    await LotteryEventRepo(db).update(
+        eid, apply_end_at=late_night + timedelta(hours=2),
+    )
+    result = await disp.dispatch_deadlines(now=late_night)
+    assert result.update_sent == 0
+    # deadline 通知は送られていない (LINE は new 1 件のまま)
+    assert len(notifier.sent) == 1

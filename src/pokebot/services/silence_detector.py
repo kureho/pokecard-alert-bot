@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from ..lib.dedupe import build_notification_dedupe_key
+from ..lib.quiet_hours import is_quiet_hours
 from ..notify.line import Notifier
 from ..storage.db import Database
 from ..storage.repos import NotificationRepo
@@ -81,6 +82,10 @@ class SilenceDetector:
 
     async def tick(self, *, now: datetime) -> int:
         """各失敗ソースに対し、24h 間隔以上空いていれば LINE で警告。送信件数を返す。"""
+        if is_quiet_hours(now):
+            # 夜間の監視アラートも抑止。次回 tick で debounce が残っていれば送らない。
+            log.info("silence tick: quiet hours (%s), skip", now.strftime("%H:%M"))
+            return 0
         warnings = await _collect_warnings(self._db, now)
         sent = 0
         for w in warnings:

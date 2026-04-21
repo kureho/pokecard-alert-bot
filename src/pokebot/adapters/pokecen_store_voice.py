@@ -8,6 +8,7 @@ import feedparser
 
 from ..lib.body_extractor import extract_body_info
 from ..lib.normalize import normalize_product_name
+from ..lib.region import is_pokecen_tokyo_metro
 from ..lib.snapshot import content_hash
 from ..lib.text_clean import clean_text
 from ..lib.title_classifier import TitleCategory, classify_title
@@ -60,6 +61,9 @@ class PokecenStoreVoiceAdapter(SourceAdapter):
         out: list[Candidate] = []
         fetched = 0
         for shop_key, shop_display in SHOPS:
+            # 東京近郊 (1都3県) 以外の店舗は feed 取得もしない。
+            if not is_pokecen_tokyo_metro(shop_key):
+                continue
             try:
                 if self._feeds is not None:
                     xml = self._feeds.get(shop_key)

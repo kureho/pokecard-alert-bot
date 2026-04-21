@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
 from ..lib.dedupe import build_notification_dedupe_key
+from ..lib.quiet_hours import is_quiet_hours
 from ..notify.line import Notifier
 from ..storage.db import Database
 from ..storage.repos import NotificationRepo
@@ -194,6 +195,10 @@ class DailySummaryService:
 
     async def maybe_run(self, *, now: datetime) -> bool:
         """発火窓内で未送信なら送信。送信したら True。"""
+        # 夜間通知抑止の対象。target を quiet hours 内に設定しても送られない
+        # (デフォルト target=10:00 は抑止窓の外)。
+        if is_quiet_hours(now):
+            return False
         target_today = datetime.combine(now.date(), self._target)
         delta_min = (now - target_today).total_seconds() / 60
         if delta_min < 0 or delta_min >= DAILY_REPORT_WINDOW_MIN:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -8,6 +9,7 @@ from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_exponen
 
 from ..lib.confidence import CONFIDENCE_HIGH
 from ..lib.dedupe import build_notification_dedupe_key
+from ..lib.quiet_hours import is_quiet_hours
 from ..notify.line import DryRunNotifier, Notifier
 from ..storage.repos import (
     LotteryEvent,
@@ -73,6 +75,32 @@ def _format_dt(dt: datetime | None) -> str:
         return "未定"
     # `%-m` は POSIX 拡張で Windows 非対応のため、手動フォーマットにして移植性を担保
     return f"{dt.month}/{dt.day} {dt.hour:02d}:{dt.minute:02d}"
+
+
+def _update_content_version(event: "LotteryEvent") -> str:
+    """Update 通知 dedupe 用の content hash。
+
+    実際に LINE メッセージに出る情報 (商品・期間・sales_type・status・条件) だけを
+    ハッシュ化する。last_seen_at / updated_at のような「最後にスクレイプした時刻」
+    を混ぜてしまうと、内容が変わっていなくても 6時間ごとに ndk が変わり、
+    同一内容の update 通知が何度も LINE に流れる原因になる。
+    """
+    def _iso(dt: datetime | None) -> str:
+        return dt.isoformat() if dt else "-"
+
+    parts = [
+        _iso(event.apply_start_at),
+        _iso(event.apply_end_at),
+        _iso(event.result_at),
+        _iso(event.purchase_start_at),
+        _iso(event.purchase_end_at),
+        event.sales_type or "",
+        event.status or "",
+        event.purchase_limit_text or "",
+        event.conditions_text or "",
+    ]
+    digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+    return digest[:12]
 
 
 def format_event_message(
@@ -200,10 +228,12 @@ class NotificationDispatcher:
                 result.suppressed += 1
                 return
 
-        # dedupe key: new は1度だけ送る。update は last_seen_at の分単位 ISO で差別化し、
-        # 情報量増加のたびに 1 本だけ送れるようにする。
+        # dedupe key: new は1度だけ送る。update は告知内容 (apply/result/purchase/
+        # sales_type/status/条件) のハッシュで差別化し、内容変化時だけ 1 本送れるようにする。
+        # 以前は last_seen_at を使っていたが、スクレイプ毎に bump されるため
+        # 同一内容の update 通知が 6時間ごとに再発火していた (カードラボ浜松事案)。
         if notification_type == "update":
-            content_version = event.last_seen_at.isoformat(timespec="minutes")
+            content_version = _update_content_version(event)
         else:
             content_version = "v1"
         ndk = build_notification_dedupe_key(
@@ -241,6 +271,19 @@ class NotificationDispatcher:
             source_note=source_note,
             other_stores=other_stores_display,
         )
+
+        # update 限定: 直前 (new/update/deadline) と全く同じ payload_summary なら
+        # 内容変化ゼロの再通知になるため送らない。
+        # カードラボ浜松のような高頻度スクレイプ店舗で、スクレイプごとに last_seen_at が
+        # bump され 6時間ごとに同一内容の update が流れていた事案を防ぐ。
+        if notification_type == "update":
+            already_sent = await self._notif.has_sent_with_summary(
+                lottery_event_id=event.id,
+                summary=summary[:500],
+            )
+            if already_sent:
+                result.suppressed += 1
+                return
 
         # DRY_RUN: notifications テーブルに触れず、would-send ログのみ出す。
         # これにより本番 run 時に過去の DRY_RUN 予約が suppress 原因にならない。
@@ -311,6 +354,10 @@ class NotificationDispatcher:
         この関数は "未送信 new" を new として処理する。
         """
         result = NotificationResult()
+        # 通知抑止時間帯 (夜21時〜翌朝10時) は送らず、次の run で拾い直す。
+        if is_quiet_hours(now):
+            log.info("dispatch: quiet hours (%s), skip", now.strftime("%H:%M"))
+            return result
         since = now - self._fresh_window
         events = await self._lottery.list_active_since(since, limit=200)
         log.info(
@@ -355,6 +402,9 @@ class NotificationDispatcher:
         - cap: per-run / per-day は new と共有 (同じ notifications テーブル)
         """
         result = NotificationResult()
+        if is_quiet_hours(now):
+            log.info("dispatch_updates: quiet hours (%s), skip", now.strftime("%H:%M"))
+            return result
         since = now - self._fresh_window
         events = await self._lottery.list_recently_updated_since(since, limit=200)
 
@@ -409,6 +459,9 @@ class NotificationDispatcher:
           なので deadline より先に new を送るべき。その場合は dispatch() で拾われる)
         """
         result = NotificationResult()
+        if is_quiet_hours(now):
+            log.info("dispatch_deadlines: quiet hours (%s), skip", now.strftime("%H:%M"))
+            return result
         events = await self._lottery.list_ending_soon(
             now=now, within=self._deadline_window, limit=200
         )
