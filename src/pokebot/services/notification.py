@@ -26,6 +26,9 @@ DEFAULT_MAX_PER_DAY = 6
 DEFAULT_FRESH_WINDOW = timedelta(days=3)
 # 締切前 alert の window: apply_end_at が「今から何時間以内」なら発火。
 DEFAULT_DEADLINE_WINDOW = timedelta(hours=3)
+# update 通知のクールダウン: new 送信後 / 前 update 送信後 これより短いと再発火しない。
+# 6時間 = 1日最大 4通まで (実質ノイズ防止)。
+UPDATE_COOLDOWN = timedelta(hours=6)
 
 CONFIRMATION_LABEL = {
     "confirmed": "[高信頼]",
@@ -317,15 +320,15 @@ class NotificationDispatcher:
             )
             if last_new_sent is None:
                 continue
-            # new 送信直後の同内容 update を避ける:
-            # event.updated_at が new の sent_at より十分に後 (> 5分) でないと発火しない
-            if ev.last_seen_at <= last_new_sent + timedelta(minutes=5):
+            # new 送信後 UPDATE_COOLDOWN (6h) 未満は update 対象外。
+            # last_seen_at は毎 lottery_watch で bump されるので、時刻ベースで判定する。
+            if (now - last_new_sent) < UPDATE_COOLDOWN:
                 continue
-            # 既に最新状態の update 通知を送信済なら skip (dedupe_key レベルでも suppress されるが早期 return)
+            # 前回 update 送信から UPDATE_COOLDOWN 未満も skip (連続 update 抑制)
             last_update_sent = await self._notif.get_last_sent_at(
                 lottery_event_id=ev.id, notification_type="update"
             )
-            if last_update_sent is not None and ev.last_seen_at <= last_update_sent + timedelta(minutes=5):
+            if last_update_sent is not None and (now - last_update_sent) < UPDATE_COOLDOWN:
                 continue
             before = result.update_sent
             await self.dispatch_for_event(

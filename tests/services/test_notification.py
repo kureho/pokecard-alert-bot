@@ -269,8 +269,8 @@ async def test_dispatch_updates_fires_for_extended_event(db):
         eid,
         apply_end_at=datetime(2026, 5, 20, 23, 59),
     )
-    # update 通知 dispatch
-    result = await disp.dispatch_updates(now=datetime(2026, 4, 21, 12, 10))
+    # update 通知 dispatch (new 送信後 7時間以上経過 = UPDATE_COOLDOWN 超え)
+    result = await disp.dispatch_updates(now=datetime(2026, 4, 21, 19, 10))
     assert result.update_sent == 1
 
 
