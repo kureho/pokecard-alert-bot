@@ -110,6 +110,14 @@ class PokecenStoreVoiceAdapter(SourceAdapter):
                     if body_info is None or not body_info.has_any_date:
                         continue
 
+                # 商品名: body の h1/title を優先 (タイトル【】等ノイズ除去のため)
+                if body_info and body_info.product_name:
+                    product_name_raw = clean_text(body_info.product_name)
+                    product_name_normalized = normalize_product_name(body_info.product_name)
+                else:
+                    product_name_raw = clean_text(title)
+                    product_name_normalized = normalize_product_name(title)
+
                 apply_start = body_info.apply_start_at if body_info else None
                 apply_end = body_info.apply_end_at if body_info else None
                 result_at = body_info.result_at if body_info else None
@@ -122,8 +130,8 @@ class PokecenStoreVoiceAdapter(SourceAdapter):
                 snapshot_src = body_html if body_html else (title + "|" + link)
 
                 out.append(Candidate(
-                    product_name_raw=clean_text(title),
-                    product_name_normalized=normalize_product_name(title),
+                    product_name_raw=product_name_raw,
+                    product_name_normalized=product_name_normalized,
                     retailer_name="pokemoncenter",
                     store_name=store_label,
                     sales_type=analysis.inferred_sales_type,

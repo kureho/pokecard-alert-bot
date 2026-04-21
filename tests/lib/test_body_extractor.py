@@ -34,3 +34,23 @@ def test_alternative_label_applies():
     r = extract_body_info(html)
     assert r.apply_start_at is not None
     assert r.apply_end_at is not None
+
+
+def test_extracts_product_name_from_h1():
+    html = """<html><head><title>アビスアイ｜ポケモンセンター</title></head>
+    <body><h1>拡張パック アビスアイ</h1><p>本文</p></body></html>"""
+    r = extract_body_info(html)
+    assert r.product_name == "拡張パック アビスアイ"
+
+
+def test_extracts_product_name_from_title_if_no_h1():
+    html = """<html><head><title>アビスアイ抽選｜ポケモンカード公式</title></head>
+    <body><p>本文のみ</p></body></html>"""
+    r = extract_body_info(html)
+    assert r.product_name == "アビスアイ抽選"
+
+
+def test_product_name_none_if_neither():
+    html = """<html><body><p>title も h1 も無いページ</p></body></html>"""
+    r = extract_body_info(html)
+    assert r.product_name is None

@@ -47,6 +47,7 @@ class ExtractedBody:
     purchase_limit_text: str | None = None
     conditions_text: str | None = None
     body_text: str = ""
+    product_name: str | None = None
 
     @property
     def has_any_date(self) -> bool:
@@ -93,11 +94,35 @@ def _find_range(text_after: str) -> tuple[datetime | None, datetime | None]:
     return parse_jp_datetime(text_after), None
 
 
+def _extract_product_name(soup: BeautifulSoup) -> str | None:
+    """h1 優先、無ければ <title> からサイト名部分を除去して返す。"""
+    h1 = soup.select_one("h1")
+    if h1:
+        raw_h1 = clean_text(h1.get_text(" "))
+        if raw_h1 and len(raw_h1) < 200:
+            return raw_h1
+    title_tag = soup.select_one("title")
+    if title_tag:
+        raw_title = clean_text(title_tag.get_text(" "))
+        if raw_title:
+            # 「サイト名」部分を削除 (例: 「アビスアイ｜ポケモンセンター」→ 「アビスアイ」)
+            for sep in ("｜", "|", " - ", " — ", "│"):
+                if sep in raw_title:
+                    raw_title = raw_title.split(sep, 1)[0].strip()
+                    break
+            if raw_title and len(raw_title) < 200:
+                return raw_title
+    return None
+
+
 def extract_body_info(html: str) -> ExtractedBody:
     soup = BeautifulSoup(html, "html.parser")
+    # product_name は chrome 除去前に取得 (title タグは head 内なので本来残るが、
+    # h1 が nav/header 内にあることは稀。素直に strip 前に採る)
+    product_name = _extract_product_name(soup)
     _strip_chrome(soup)
     text = clean_text(soup.get_text(" "))
-    result = ExtractedBody(body_text=text)
+    result = ExtractedBody(body_text=text, product_name=product_name)
 
     for label, field, is_range in _LABEL_FIELDS:
         idx = text.find(label)

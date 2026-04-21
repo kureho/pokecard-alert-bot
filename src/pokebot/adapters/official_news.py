@@ -111,6 +111,11 @@ class PokemonOfficialNewsAdapter(SourceAdapter):
                 if body_info is None or not body_info.has_any_date:
                     continue
 
+            # 商品名: body の h1/title を優先 (タイトルの【】等ノイズ除去のため)
+            if body_info and body_info.product_name:
+                product_name_raw = clean_text(body_info.product_name)
+                product_name_normalized = normalize_product_name(body_info.product_name)
+
             # 日付は本文優先、無ければ None (タイトル日付は発売日の可能性が高いので避ける)
             apply_start = body_info.apply_start_at if body_info else None
             apply_end = body_info.apply_end_at if body_info else None
