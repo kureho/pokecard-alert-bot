@@ -15,6 +15,7 @@ from . import (  # noqa: F401
     pokecen_online_guide,
     pokecen_online_lottery,
     pokecen_store_voice,
+    rakuten_books_entry,
     twitter_syndication,
     yodobashi_lottery,
 )

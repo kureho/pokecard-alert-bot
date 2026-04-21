@@ -52,6 +52,7 @@ LOTTERY_WATCH_ADAPTERS = [
     "twitter_t_sanoTCG",
     "nyuka_now_news",
     "amazon_search",
+    "rakuten_books_entry",
 ]
 
 

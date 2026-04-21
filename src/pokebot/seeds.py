@@ -110,6 +110,14 @@ SEED_SOURCES: list[tuple[str, str, str, int]] = [
         "https://www.amazon.co.jp/s?k=pokemon+card",
         85,
     ),
+    # 楽天ブックス ポケモンカードゲーム抽選受付ページ (公式 entry page, EUC-JP)。
+    # 商品別ではなく「楽天ブックス抽選枠」単位で期間情報を持つため trust=95。
+    (
+        "rakuten_books_entry",
+        "retailer_lottery",
+        "https://books.rakuten.co.jp/event/game/card/entry/",
+        95,
+    ),
 ]
 
 
