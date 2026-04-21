@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from tenacity import AsyncRetrying, RetryError, stop_after_attempt, wait_exponential
 
@@ -21,6 +21,8 @@ log = logging.getLogger(__name__)
 
 DEFAULT_MAX_PER_RUN = 10
 DEFAULT_MAX_PER_DAY = 150
+# 新鮮度: first_seen_at がこの期間内の event のみ通知対象。store_voice feed の過去履歴を除外する。
+DEFAULT_FRESH_WINDOW = timedelta(days=3)
 
 CONFIRMATION_LABEL = {
     "confirmed": "[高信頼]",
@@ -109,6 +111,7 @@ class NotificationDispatcher:
         notifier: Notifier,
         max_per_run: int = DEFAULT_MAX_PER_RUN,
         max_per_day: int = DEFAULT_MAX_PER_DAY,
+        fresh_window: timedelta = DEFAULT_FRESH_WINDOW,
     ) -> None:
         self._lottery = lottery_repo
         self._product = product_repo
@@ -116,6 +119,7 @@ class NotificationDispatcher:
         self._notifier = notifier
         self._max_per_run = max_per_run
         self._max_per_day = max_per_day
+        self._fresh_window = fresh_window
 
     async def dispatch_for_event(
         self,
@@ -197,7 +201,8 @@ class NotificationDispatcher:
         この関数は "未送信 new" を new として処理する。
         """
         result = NotificationResult()
-        events = await self._lottery.list_active(limit=200)
+        since = now - self._fresh_window
+        events = await self._lottery.list_active_since(since, limit=200)
 
         per_day_used = 0
         if self._max_per_day is not None:

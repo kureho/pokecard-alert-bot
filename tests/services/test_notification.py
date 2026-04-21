@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -168,6 +168,48 @@ async def test_dispatch_skips_unconfirmed(db):
     result = await disp.dispatch(now=datetime(2026, 4, 21, 12))
     assert result.new_sent == 0
     assert result.skipped_low_confidence >= 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_filters_out_old_events(db):
+    """first_seen_at が fresh_window より古い event は通知対象外。"""
+    await _seed_source(db)
+    # event を直接 insert し、first_seen_at を過去にセット
+    async with db.pool.acquire() as conn:
+        # sources テーブルに 1 レコード必要
+        pass
+    lrepo = LotteryEventRepo(db)
+    old_id = await lrepo.create(
+        retailer_name="pokemoncenter_online",
+        canonical_title="old announcement",
+        sales_type="lottery",
+        dedupe_key="old-k1",
+        apply_start_at=datetime(2026, 1, 10, 14),
+        apply_end_at=datetime(2026, 1, 14, 23, 59),
+        source_primary_url="https://old",
+        confidence_score=95,
+        official_confirmation_status="confirmed",
+        status="active",
+    )
+    # first_seen_at を 10 日前にセット
+    async with db.pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE lottery_events SET first_seen_at = $1 WHERE id = $2",
+            datetime(2026, 4, 11, 12), old_id,
+        )
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=lrepo,
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+        fresh_window=timedelta(days=3),
+    )
+    result = await disp.dispatch(now=datetime(2026, 4, 21, 12))
+    assert result.new_sent == 0
+    assert notifier.sent == []
 
 
 def test_format_event_message_has_label():

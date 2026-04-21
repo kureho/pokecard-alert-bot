@@ -284,6 +284,22 @@ class LotteryEventRepo:
             )
         return [self._row_to_event(r) for r in rows]
 
+    async def list_active_since(
+        self, since: datetime, *, limit: int = 200
+    ) -> list[LotteryEvent]:
+        """first_seen_at >= since の active event を新しい順に返す。
+
+        古い告知 (store_voice feed の過去履歴) を通知対象から除外するためのフィルタ。
+        """
+        async with self._db.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT * FROM lottery_events
+                   WHERE status = 'active' AND first_seen_at >= $1
+                   ORDER BY first_seen_at DESC LIMIT $2""",
+                since, limit,
+            )
+        return [self._row_to_event(r) for r in rows]
+
     async def add_source_link(
         self,
         lottery_event_id: int,

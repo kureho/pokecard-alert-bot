@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from . import adapters  # noqa: F401  # side-effect: all adapters register
 from .adapters.registry import AdapterRegistry
+from .lib.dedupe import build_notification_dedupe_key
 from .logging_setup import setup_logging
 from .notify.line import DryRunNotifier, LineNotifier, Notifier
 from .seeds import seed_sources
@@ -109,6 +110,34 @@ async def job_product_sync() -> None:
         await db.close()
 
 
+async def _seed_notification_sent(
+    notif_repo: NotificationRepo,
+    *,
+    lottery_event_id: int,
+    dedupe_key: str,
+    now: datetime,
+) -> None:
+    """初回スクレイプ時、生成されたイベントに対し new 通知を即 "送信済み" として記録する。
+
+    これにより、次回 dispatch で同じ dedupe_key が try_claim 時に衝突して suppress される。
+    LINE には 1 件も送られない (洪水防止)。
+    """
+    ndk = build_notification_dedupe_key(
+        lottery_dedupe_key=dedupe_key,
+        notification_type="new",
+        content_version="v1",
+    )
+    claim_id = await notif_repo.try_claim(
+        lottery_event_id=lottery_event_id,
+        notification_type="new",
+        channel="line",
+        dedupe_key=ndk,
+        payload_summary="[first-run seed; not sent]",
+    )
+    if claim_id is not None:
+        await notif_repo.mark_sent(claim_id, now)
+
+
 async def job_lottery_watch() -> None:
     load_dotenv()
     dsn = os.environ["DATABASE_URL"]
@@ -118,6 +147,7 @@ async def job_lottery_watch() -> None:
         source_repo = SourceRepo(db)
         product_repo = ProductRepo(db)
         lottery_repo = LotteryEventRepo(db)
+        notif_repo = NotificationRepo(db)
         upsert = LotteryEventUpsertService(
             lottery_repo=lottery_repo,
             product_repo=product_repo,
@@ -126,7 +156,11 @@ async def job_lottery_watch() -> None:
         now = datetime.now()
         total_new = 0
         total_updated = 0
+        total_seeded = 0
         for name in LOTTERY_WATCH_ADAPTERS:
+            # record_success 前に first_run 判定する
+            source_before = await source_repo.get_by_name(name)
+            is_first_run = source_before is None or source_before.last_success_at is None
             candidates = await _run_adapter(name, source_repo, now)
             for c in candidates:
                 out = await upsert.apply(c, now=now)
@@ -134,9 +168,20 @@ async def job_lottery_watch() -> None:
                     continue
                 if out.is_new:
                     total_new += 1
+                    if is_first_run:
+                        await _seed_notification_sent(
+                            notif_repo,
+                            lottery_event_id=out.event_id,
+                            dedupe_key=out.dedupe_key,
+                            now=now,
+                        )
+                        total_seeded += 1
                 elif out.is_updated:
                     total_updated += 1
-        log.info("lottery_watch complete: new=%d updated=%d", total_new, total_updated)
+        log.info(
+            "lottery_watch complete: new=%d updated=%d first_run_seeded=%d",
+            total_new, total_updated, total_seeded,
+        )
     finally:
         await db.close()
 
