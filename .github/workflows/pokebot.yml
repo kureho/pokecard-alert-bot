@@ -33,7 +33,8 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    # 12 adapters + body fetch で 8分程度。余裕を持って 12分。
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
