@@ -40,6 +40,9 @@ LOTTERY_WATCH_ADAPTERS = [
     "pokemoncenter_store_voice",
     "yodobashi_lottery",
     "biccamera_lottery",
+    "c_labo_blog",
+    "amiami_lottery",
+    "pokecawatch_chusen",
 ]
 
 
