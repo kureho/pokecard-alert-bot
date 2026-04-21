@@ -376,6 +376,25 @@ async def job_audit() -> None:
             # Notifications history
             print()
             print("=" * 80)
+            print("# notifications 型別集計 (今日 UTC 0:00 以降 sent):")
+            print("=" * 80)
+            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            rows = await conn.fetch(
+                """SELECT notification_type,
+                          COUNT(*) AS total,
+                          COUNT(*) FILTER (WHERE sent_at IS NOT NULL) AS sent_total,
+                          COUNT(*) FILTER (WHERE sent_at >= $1) AS sent_today
+                   FROM notifications GROUP BY notification_type ORDER BY total DESC""",
+                today,
+            )
+            for r in rows:
+                print(
+                    f"  {r['notification_type']:10} total={r['total']:4d} "
+                    f"sent_all={r['sent_total']:4d} sent_today={r['sent_today']:4d}"
+                )
+
+            print()
+            print("=" * 80)
             print("# notifications 直近15件:")
             print("=" * 80)
             rows = await conn.fetch(
