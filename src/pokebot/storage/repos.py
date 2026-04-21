@@ -409,3 +409,16 @@ class NotificationRepo:
                 lottery_event_id, notification_type,
             )
         return row is not None
+
+    async def get_last_sent_at(
+        self, *, lottery_event_id: int, notification_type: str
+    ) -> datetime | None:
+        """指定 event × type の最新 sent_at を返す (ない場合 None)。"""
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT MAX(sent_at) AS last_sent FROM notifications
+                   WHERE lottery_event_id = $1 AND notification_type = $2
+                     AND sent_at IS NOT NULL""",
+                lottery_event_id, notification_type,
+            )
+        return row["last_sent"] if row and row["last_sent"] else None

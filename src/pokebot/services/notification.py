@@ -308,9 +308,20 @@ class NotificationDispatcher:
                 )
                 break
             # new 通知が既に送信済みの event だけが update 対象
-            if not await self._notif.has_notification_sent(
+            last_new_sent = await self._notif.get_last_sent_at(
                 lottery_event_id=ev.id, notification_type="new"
-            ):
+            )
+            if last_new_sent is None:
+                continue
+            # new 送信直後の同内容 update を避ける:
+            # event.updated_at が new の sent_at より十分に後 (> 5分) でないと発火しない
+            if ev.last_seen_at <= last_new_sent + timedelta(minutes=5):
+                continue
+            # 既に最新状態の update 通知を送信済なら skip (dedupe_key レベルでも suppress されるが早期 return)
+            last_update_sent = await self._notif.get_last_sent_at(
+                lottery_event_id=ev.id, notification_type="update"
+            )
+            if last_update_sent is not None and ev.last_seen_at <= last_update_sent + timedelta(minutes=5):
                 continue
             before = result.update_sent
             await self.dispatch_for_event(
