@@ -310,6 +310,19 @@ class LotteryEventRepo:
             )
         return [self._row_to_event(r) for r in rows]
 
+    async def list_recently_updated_since(
+        self, since: datetime, *, limit: int = 100
+    ) -> list[LotteryEvent]:
+        """updated_at >= since かつ active の event。update 通知候補。"""
+        async with self._db.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT * FROM lottery_events
+                   WHERE status = 'active' AND updated_at >= $1
+                   ORDER BY updated_at DESC LIMIT $2""",
+                since, limit,
+            )
+        return [self._row_to_event(r) for r in rows]
+
     async def add_source_link(
         self,
         lottery_event_id: int,
@@ -383,3 +396,16 @@ class NotificationRepo:
                 "UPDATE notifications SET sent_at = $1 WHERE id = $2",
                 at, notification_id,
             )
+
+    async def has_notification_sent(
+        self, *, lottery_event_id: int, notification_type: str
+    ) -> bool:
+        """指定 event × type の通知が sent 済みかどうか。"""
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT 1 FROM notifications
+                   WHERE lottery_event_id = $1 AND notification_type = $2
+                     AND sent_at IS NOT NULL LIMIT 1""",
+                lottery_event_id, notification_type,
+            )
+        return row is not None

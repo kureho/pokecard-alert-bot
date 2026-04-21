@@ -207,6 +207,17 @@ class NotificationDispatcher:
         elif notification_type == "update":
             result.update_sent += 1
 
+    async def _count_sent_today(self, now: datetime) -> int:
+        if self._max_per_day is None:
+            return 0
+        async with self._lottery.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT COUNT(*) AS c FROM notifications
+                   WHERE sent_at IS NOT NULL AND sent_at >= $1""",
+                now.replace(hour=0, minute=0, second=0, microsecond=0),
+            )
+        return row["c"] if row else 0
+
     async def dispatch(self, *, now: datetime) -> NotificationResult:
         """active な lottery_events を処理。新規 (new 未送) を優先的に送る。
 
@@ -217,15 +228,7 @@ class NotificationDispatcher:
         since = now - self._fresh_window
         events = await self._lottery.list_active_since(since, limit=200)
 
-        per_day_used = 0
-        if self._max_per_day is not None:
-            async with self._lottery.pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    """SELECT COUNT(*) AS c FROM notifications
-                       WHERE sent_at IS NOT NULL AND sent_at >= $1""",
-                    now.replace(hour=0, minute=0, second=0, microsecond=0),
-                )
-            per_day_used = row["c"] if row else 0
+        per_day_used = await self._count_sent_today(now)
 
         sent_this_run = 0
         for ev in events:
@@ -250,5 +253,47 @@ class NotificationDispatcher:
                 result=result,
             )
             if result.new_sent > before_new:
+                sent_this_run += 1
+        return result
+
+    async def dispatch_updates(self, *, now: datetime) -> NotificationResult:
+        """直近 updated された active event で、既に new 通知送信済みのものに対し
+        update 通知を送る。dedupe_key は last_seen_at 分単位で差別化。
+
+        - 対象: updated_at >= now - fresh_window の active event
+        - 前提: 同 event の new 通知が sent 済み (そうでなければ update を先行発火しない)
+        - cap: per-run / per-day は new と共有 (同じ notifications テーブル)
+        """
+        result = NotificationResult()
+        since = now - self._fresh_window
+        events = await self._lottery.list_recently_updated_since(since, limit=200)
+
+        per_day_used = await self._count_sent_today(now)
+
+        sent_this_run = 0
+        for ev in events:
+            if self._max_per_run is not None and sent_this_run >= self._max_per_run:
+                log.warning("notify_updates per-run cap %d reached", self._max_per_run)
+                break
+            if (
+                self._max_per_day is not None
+                and (per_day_used + sent_this_run) >= self._max_per_day
+            ):
+                log.warning(
+                    "notify_updates per-day cap %d reached (today=%d)",
+                    self._max_per_day,
+                    per_day_used,
+                )
+                break
+            # new 通知が既に送信済みの event だけが update 対象
+            if not await self._notif.has_notification_sent(
+                lottery_event_id=ev.id, notification_type="new"
+            ):
+                continue
+            before = result.update_sent
+            await self.dispatch_for_event(
+                ev, notification_type="update", now=now, result=result,
+            )
+            if result.update_sent > before:
                 sent_this_run += 1
         return result

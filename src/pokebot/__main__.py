@@ -216,6 +216,14 @@ async def job_notify_dispatch() -> None:
             result.skipped_low_confidence,
         )
 
+        # Update 通知: 既に new 送信済 event で significant field に変化があったもの
+        update_result = await disp.dispatch_updates(now=now)
+        log.info(
+            "notify_dispatch_updates: update=%d suppressed=%d",
+            update_result.update_sent,
+            update_result.suppressed,
+        )
+
         # Daily summary (JST 09:00 窓で 1日1回)
         from .services.daily_summary import DailySummaryService
 

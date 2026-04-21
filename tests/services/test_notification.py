@@ -248,6 +248,54 @@ async def test_dispatch_skips_unknown_sales_type(db):
     assert notifier.sent == []
 
 
+@pytest.mark.asyncio
+async def test_dispatch_updates_fires_for_extended_event(db):
+    """new 通知送信済 event の significant field が変化 → update 通知が発火。"""
+    eid = await _create_confirmed_event(db)
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    # 先に new 通知を発火
+    r_new = await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
+    assert r_new.new_sent == 1
+    # event の apply_end_at を延長 (意味差分)
+    await LotteryEventRepo(db).update(
+        eid,
+        apply_end_at=datetime(2026, 5, 20, 23, 59),
+    )
+    # update 通知 dispatch
+    result = await disp.dispatch_updates(now=datetime(2026, 4, 21, 12, 10))
+    assert result.update_sent == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_updates_skips_without_prior_new(db):
+    """new 通知未送信の event には update 通知を送らない。"""
+    eid = await _create_confirmed_event(db)
+    # new 通知は送らない
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    # update だけ呼ぶ
+    await LotteryEventRepo(db).update(
+        eid, apply_end_at=datetime(2026, 5, 20, 23, 59),
+    )
+    result = await disp.dispatch_updates(now=datetime(2026, 4, 21, 12, 10))
+    assert result.update_sent == 0
+
+
 def test_format_event_message_has_label():
     from pokebot.storage.repos import LotteryEvent
 
