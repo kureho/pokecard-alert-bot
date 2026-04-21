@@ -42,3 +42,16 @@
 - **冪等 migration SQL を同じ SCHEMA_SQL に書くときは、`ALTER TABLE` を対応する `CREATE INDEX` より先に配置する**
 - 「新規 DB は CREATE TABLE で済み、既存 DB は ALTER で追随」というパターンを使う場合、依存する index / FK 等のオブジェクトは ALTER の後ろに置く
 - テストで TRUNCATE しているだけの test DB は既存 DB と同じ扱い (テーブル定義は再作成されない) なので、順序バグは test 一回で顕在化する
+
+## 2026-04-21 TOP ページ → 個別告知 URL パターンマッチの調査優先度
+
+### 教訓
+- 「/information/」「/news/」一覧ページが JS 動的だと 1KB しか取れない (例: yamada-denki.jp の information root)
+- 一覧ページが空に見えたら **TOP ページに貼られているバナーリンク** を最初に確認する
+- ヤマダの場合: `yamada-denki.jp/` トップ内に `/information/YYMMDD_pokemon-card/` が href 直書きされている
+- regex 抽出で個別告知 URL を取り、各ページに fetch して本文解析するほうが確実
+
+### 類似パターンで確認すべき箇所
+- ヨドバシカメラ (403 for US IP): Twitter `@Yodobashi` 経由が現実的
+- エディオン (TOP 直 link なし): 告知が不定期・Twitter `@edion_official` 経由が現実的
+- あみあみ (403 for US IP): 代替経路検討
