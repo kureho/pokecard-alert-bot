@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ..adapters.base import Candidate
 from ..lib.confidence import classify_confirmation, compute_confidence
@@ -11,6 +11,10 @@ from ..lib.normalize import normalize_retailer, normalize_store
 from ..storage.repos import LotteryEventRepo, ProductRepo, SourceRepo
 
 log = logging.getLogger(__name__)
+
+# 告知の source_published_at がこの窓より古い candidate は 'archived' 扱いで保存し、
+# 通知対象から除外する。過去数ヶ月分の RSS 履歴が LINE に流れる事故を防ぐ。
+SOURCE_FRESHNESS_WINDOW = timedelta(days=14)
 
 
 @dataclass
@@ -97,6 +101,14 @@ class LotteryEventUpsertService:
             confidence_score=confidence, source_trust_score=source_trust
         )
 
+        # 告知の source_published_at が古すぎる場合は 'archived' 扱い。
+        # 通知対象 (status='active') から自動的に外す。
+        event_status = "active"
+        if candidate.source_published_at is not None:
+            age = now - candidate.source_published_at
+            if age > SOURCE_FRESHNESS_WINDOW:
+                event_status = "archived"
+
         existing = await self._lottery_repo.find_by_dedupe_key(dedupe_key)
         if existing is None:
             new_id = await self._lottery_repo.create(
@@ -116,7 +128,7 @@ class LotteryEventUpsertService:
                 official_confirmation_status=status,
                 confidence_score=confidence,
                 dedupe_key=dedupe_key,
-                status="active",
+                status=event_status,
             )
             if source_id:
                 await self._lottery_repo.add_source_link(
@@ -145,6 +157,9 @@ class LotteryEventUpsertService:
             updates["product_id"] = product_id
         if candidate.source_url and existing.source_primary_url != candidate.source_url:
             updates["source_primary_url"] = candidate.source_url
+        # 古い告知は retroactive に archive
+        if event_status == "archived" and existing.status == "active":
+            updates["status"] = "archived"
 
         meaningful_changes = any(k in self.SIGNIFICANT_FIELDS for k in updates.keys())
 

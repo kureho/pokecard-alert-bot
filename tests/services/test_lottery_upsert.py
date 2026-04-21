@@ -85,3 +85,60 @@ async def test_official_source_gets_high_confidence(db):
     ev = await LotteryEventRepo(db).find_by_dedupe_key(out.dedupe_key)
     assert ev.official_confirmation_status == "confirmed"
     assert ev.confidence_score >= 90
+
+
+@pytest.mark.asyncio
+async def test_old_announcement_marked_archived(db):
+    """source_published_at が 14日以上古い candidate は status='archived'。"""
+    from datetime import timedelta
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    old = _cand(
+        product_name_normalized="古い告知",
+        apply_start_at=now - timedelta(days=55),
+        apply_end_at=now - timedelta(days=50),
+    )
+    old.source_published_at = now - timedelta(days=60)
+    out = await svc.apply(old, now=now)
+    assert out and out.is_new
+    events = await LotteryEventRepo(db).list_active(limit=100)
+    assert out.event_id not in {e.id for e in events}
+
+
+@pytest.mark.asyncio
+async def test_fresh_announcement_stays_active(db):
+    """source_published_at が 14日以内なら 'active'。"""
+    from datetime import timedelta
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    fresh = _cand()
+    fresh.source_published_at = now - timedelta(days=2)
+    out = await svc.apply(fresh, now=now)
+    assert out and out.is_new
+    events = await LotteryEventRepo(db).list_active(limit=100)
+    assert out.event_id in {e.id for e in events}
+
+
+@pytest.mark.asyncio
+async def test_existing_active_event_is_archived_retroactively(db):
+    """既存 active event が新たな candidate で古いと判明 → retroactive archive。"""
+    from datetime import timedelta
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    # 最初は新鮮な告知として登録
+    fresh = _cand()
+    fresh.source_published_at = now - timedelta(days=1)
+    o1 = await svc.apply(fresh, now=now)
+    assert o1.is_new
+    events = await LotteryEventRepo(db).list_active(limit=100)
+    assert o1.event_id in {e.id for e in events}
+
+    # 時間が経過し、同じ dedupe_key だが source_published_at が古くなった候補が再到来
+    # （本来は RSS が古いエントリをまだ出している状態）
+    later_now = now + timedelta(days=20)
+    old_cand = _cand()
+    old_cand.source_published_at = now - timedelta(days=1)  # absolute age now 21 日
+    # `now` を 20日後に送って candidate の age を 14日超に
+    await svc.apply(old_cand, now=later_now)
+    events2 = await LotteryEventRepo(db).list_active(limit=100)
+    assert o1.event_id not in {e.id for e in events2}
