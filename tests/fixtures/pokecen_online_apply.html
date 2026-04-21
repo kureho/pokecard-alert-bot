@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="ja">
+<head><script type="text/javascript" src="/a/larkbileomet.js?single" ></script>
+    <meta charset="utf-8">
+    <meta name="format-detection" content="telephone=no">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="description"
+          content="抽選応募一覧ページです。ポケモンセンターオンラインではポケモンセンターオリジナルグッズや最新ゲームソフト、ポケモンカードゲームなど、オフィシャルショップならではの楽しいお買い物ができます。ピカチュウ、イーブイなどポケモンたちのぬいぐるみもゲットしてみて。ポケットモンスターグッズ公式通販サイト。">
+    <meta name="theme-color" content="#dddddd">
+    <title>抽選応募一覧｜【公式】ポケモンセンターオンライン</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@100..900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">
+    <link rel="apple-touch-icon-precomposed" href="../static/images/common/apple-touch-icon-180x180.png">
+    <link rel="icon" href="../static/images/common/favicon.ico"/>
+    <link rel="manifest" href="../static/images/common/manifest.json"/>
+    <link rel="stylesheet" type="text/css" href="../static/css/common/magnific-popup.css">
+    <link rel="stylesheet" type="text/css" href="../static/css/common/style.css">
+    <link rel="stylesheet" type="text/css" href="../static/css/common/common.css">
+    <link rel="stylesheet" type="text/css" href="../static/css/common/fix.css">
+    <link rel="stylesheet" type="text/css" href="../static/css/SC_O04_10/apply.css">
+    <script id="gigya-js" defer type="text/javascript"></script>
+    <script defer type="text/javascript" src="../static/js/common/head.js"></script>
+    <script defer type="text/javascript" src="../static/js/common/jquery.min.js"></script>
+    <script defer type="text/javascript" src="../static/js/common/magnific/jquery.magnific-popup.js"></script>
+    <script defer type="text/javascript" src="../static/js/common/dayjs.min.js"></script>
+    <script defer type="text/javascript" src="../static/js/common/utc.min.js"></script>
+    <script defer type="text/javascript" src="../static/js/common/timezone.min.js"></script>
+    <script defer type="text/javascript" src="../static/js/common/ja.min.js"></script>
+    <script defer type="text/javascript" src="../static/js/common/common.js"></script>
+    <script defer type="text/javascript" src="../static/js/common/vue.global.js"></script>
+    <script defer type="text/javascript" src="../static/js/common/ajaxRequest.js"></script>
+    <script defer type="text/javascript" src="../static/js/SC_O04_10/apply.js"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        dataLayer.push({
+            'UserId': sessionStorage.getItem("UserId") || ''
+        });
+    </script>
+    <!-- Google Tag Manager -->
+    <script>
+        (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+                new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+            j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+            'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+        })(window,document,'script','dataLayer','GTM-W4G97R75');
+    </script>
+    <!-- End Google Tag Manager -->
+</head>
+<body class="hidden">
+<!-- Google Tag Manager (noscript) -->
+<noscript>
+    <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-W4G97R75"
+            height="0" width="0" style="display:none;visibility:hidden">
+
+    </iframe>
+</noscript>
+<!-- End Google Tag Manager (noscript) -->
+<div id="container">
+    <script src="../static/js/constants/index.js"></script>
+    <script src="../static/js/common/include/header.js"></script>
+    <main id="main">
+        <div class="comBox">
+            <div class="comBackLink"><a href="#">マイページ</a></div>
+            <div class="pageTitle page01">
+                <h1 class="headLine01">抽選応募一覧</h1>
+            </div>
+            <div class="comBtn01 hidden">
+                <a href="#">抽選の流れを見る</a>
+            </div>
+            <ul class="comOrderList" v-if="lotteryList">
+                <li v-for="lottery in lotteryList">
+                    <div class="lBox">
+                        <p>{{lottery.lotteryTitle}}</p>
+                    </div>
+                    <div class="rBox">
+                        <div class="acceptBox flexB"
+                             :class="[lottery.applicationStatus =='30'?'accepting':'',
+                                      lottery.applicationStatus =='40'?'afoot':'',
+                                      lottery.applicationStatus =='50'?'finish':'']">
+                            <span class="ttl">{{getApplicationStatus(lottery.applicationStatus)}}</span>
+                            <span class="time">{{formatDate(lottery.applicationStartDatetime)}}<br
+                                    class="sp">〜{{formatDate(lottery.applicationEndDatetime)}}</span>
+                        </div>
+                        <ul class="waresUl" v-if="lottery.applicationItems.length>0">
+                            <li v-for="item in lottery.applicationItems">
+                                <div class="photo"><img v-if="item.imageUri" :src="item.imageUri"
+                                                        :alt="item.itemPrizeName">
+                                </div>
+                                <p class="name">{{item.itemPrizeName}}</p>
+                            </li>
+                        </ul>
+                        <dl class="subDl">
+                            <dt>詳しく見る</dt>
+                            <dd>
+                                <div v-html="lottery.lotteryDetail">
+                                </div>
+                                <div class="docArea" v-if="lottery.applicationStatus !='20'">
+
+                                    <div class="scrollBlock">
+                                        <p class="-header">応募要項</p>
+                                        <div class="-text" v-html="lottery.applicationGuideline">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="mailForm" v-if="lottery.applicationStatus !='20'"
+                                     :class="lottery.lotteryGroupId">
+                                    <form action="">
+                                        <ul class="radioList">
+                                            <li v-for="item in lottery.applicationItems">
+                                                <p class="radio"
+                                                   :class="(lottery.applicationStatus =='30')||(lottery.applicationStatus =='40' &&  item.applicationSelectedFlg=='1') ?'':'radio01'">
+                                                    <label><input type="radio" :name="lottery.lotteryGroupId + 'radio'"
+                                                                  :value="item.itemPrizeId"
+                                                                  :aria-label="item.itemPrizeName"
+                                                                  :disabled="(lottery.applicationStatus =='30')||(lottery.applicationStatus =='40' &&  item.applicationSelectedFlg=='1')?false:true"
+                                                                  :checked="item.applicationSelectedFlg=='1'"><span>{{item.itemPrizeName}}<small
+                                                            v-if="lottery.lotteryClass === '10'">{{formatMon(item.price)}}円（税込）</small></span></label>
+                                                </p>
+                                            </li>
+                                        </ul>
+                                        <div class="agreementArea"
+                                             :class="lottery.applicationStatus =='30'?'':'-disabled'">
+                                            <div class="checkboxWrapper">
+                                                <input :id="lottery.lotteryGroupId" type="checkbox"
+                                                       :name="lottery.lotteryGroupId + 'checkbox'" class="-check"
+                                                       :disabled="lottery.applicationStatus =='30'?false:true"
+                                                       :checked="lottery.applicationStatus =='30'?false:checkboxStatus(lottery)"
+                                                       required>
+                                                <label :for="lottery.lotteryGroupId"
+                                                       class="-label">応募要項に同意する</label>
+                                            </div>
+                                        </div>
+                                        <ul :class="lottery.applicationStatus =='30'?'linkList':'linkList01'" v-if="lottery.applicationStatus !='50'">
+                                            <li v-if="lottery.applicationStatus =='30'">
+                                                <a href="#pop01" class="popup-modal"
+                                                   @click="clickApply(lottery.lotteryGroupId)">応募する</a>
+                                            </li>
+                                            <li v-if="lottery.applicationStatus =='40'">
+                                                <a href="#pop02" class="popup-modal"
+                                                   @click="clickCancel(lottery.lotteryGroupId)">キャンセルする</a>
+                                            </li>
+                                        </ul>
+                                    </form>
+                                </div>
+                                <div class="closeLink">閉じる</div>
+                            </dd>
+                        </dl>
+                    </div>
+                </li>
+            </ul>
+        </div>
+        <div class="popBox popBox03 mfp-hide" id="pop01">
+            <div>
+                <div class="inner">
+                    <p class="title">応募してよろしいですか？</p>
+                    <ul class="linkUl">
+                        <li>
+                            <a href="#" id="applyBtn">応募する</a>
+                        </li>
+                        <li>
+                            <a href="#" class="close popup-modal-close">閉じる</a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="close02 popup-modal-close"><img src="../static/images/common/close04.png" alt="close"
+                                                            loading="lazy"></div>
+            </div>
+        </div>
+        <div class="popBox popBox03 mfp-hide" id="pop02">
+            <div>
+                <div class="inner">
+                    <p class="title">応募をキャンセルしますか？</p>
+                    <ul class="linkUl">
+                        <li>
+                            <a href="#" id="cancelBtn">キャンセルする</a>
+                        </li>
+                        <li>
+                            <a href="#" class="close popup-modal-close">閉じる</a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="close02 popup-modal-close"><img src="../static/images/common/close04.png" alt="close"
+                                                            loading="lazy"></div>
+            </div>
+        </div>
+        <div class="popBox popBox03 mfp-hide" id="pop03">
+            <div>
+                <div class="inner">
+                    <p class="title">公開中の抽選がありません。</p>
+                    <ul class="linkUl">
+                        <li>
+                            <a href="#" class="close popup-modal-close link01">閉じる</a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="close02 popup-modal-close"><img src="../static/images/common/close04.png" alt="close"
+                                                            loading="lazy"></div>
+            </div>
+        </div>
+        <div class="p02 popBox popBox03 mfp-hide" id="pop04">
+            <div>
+                <div class="inner">
+                    <p class="title">公開中の抽選がありません。</p>
+                    <ul class="linkUl">
+                        <li>
+                            <a href="#" class="close popup-modal-close link01">閉じる</a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="close02 popup-modal-close"><img src="../static/images/common/close04.png" alt="close"
+                                                            loading="lazy"></div>
+            </div>
+        </div>
+        <div class="p02 popBox popBox03 mfp-hide" id="pop05">
+            <div>
+                <div class="inner">
+                    <p class="title">一定時間操作していなかったため、OKボタンタップして再度開け直してください。</p>
+                    <ul class="linkUl">
+                        <li>
+                            <a href="#" class="close popup-modal-close link01 refresh_302">OK</a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="close02 popup-modal-close"><img src="../static/images/common/close04.png" alt="close"
+                                                            loading="lazy"></div>
+            </div>
+        </div>
+        <span href="#pop03" class="popup-modal hidden" id="no_dialog"></span>
+        <span href="#pop04" class="popup-modal hidden" id="error_dialog"></span>
+        <span href="#pop05" class="popup-modal hidden" id="302_error_dialog"></span>
+    </main>
+    <script src="../static/js/common/include/footer.js"></script>
+    <script src="../static/js/common/routes.js"></script>
+</div>
+</body>
+</html>
