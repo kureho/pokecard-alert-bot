@@ -2,9 +2,11 @@ name: pokebot
 
 on:
   schedule:
-    # Full lane (全 adapter): 0, 30 分。30 分間隔で network 全量スキャン。
+    # cron は UTC 基準 (env.TZ の影響を受けない)。毎時の分指定なので
+    # JST でも同じ間隔 = 30 分 / 15 分で安定発火する。
+    # Full lane (全 adapter): UTC 0,30 分。30 分間隔で network 全量スキャン。
     - cron: "0,30 * * * *"
-    # Fast lane (公式 + 主要販路 entry_page のみ): 15, 45 分。速報性重視。
+    # Fast lane (公式 + 主要販路 entry_page のみ): UTC 15,45 分。速報性重視。
     - cron: "15,45 * * * *"
   workflow_dispatch:
     inputs:
@@ -71,6 +73,10 @@ jobs:
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           LOG_LEVEL: INFO
+          # GHA runner は UTC だが、datetime.now() を JST 基準で扱いたい
+          # (daily_summary DAILY_REPORT_JST="09:00" を JST 09:00 窓で発火するため)。
+          # TZ を設定すれば Python datetime.now() が JST で返る。
+          TZ: Asia/Tokyo
           # schedule 実行時は inputs が存在せず真偽値扱いで false → '0' (実送信)。
           # workflow_dispatch 時はユーザー選択 (デフォルト true → '1' で DRY_RUN)。
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
