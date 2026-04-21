@@ -1,6 +1,6 @@
 # pokebot セットアップ手順
 
-GitHub Actions + Supabase (Postgres) + LINE Messaging API で動かす最小構成。
+GitHub Actions + Supabase (Postgres) + LINE Messaging API で動かす Phase 1 構成。
 
 ## 1. Supabase プロジェクト作成
 
@@ -29,30 +29,62 @@ Settings → Secrets and variables → Actions で以下を登録:
 - `LINE_CHANNEL_ACCESS_TOKEN`
 - `LINE_USER_ID`
 
-## 4. 動作確認
+任意の環境変数（workflow 内でも上書き可）:
+
+- `MAX_NOTIFY_PER_RUN` (デフォルト 10 / Phase 1 推奨 5)
+- `MAX_NOTIFY_PER_DAY` (デフォルト 150)
+- `DRY_RUN` (`1` で LINE 実送信を抑止してログ出力のみ)
+
+## 4. 初期化（bootstrap）
+
+```bash
+# ローカルから 1 度だけ実行
+DATABASE_URL=... python -m pokebot bootstrap
+```
+
+これで
+
+- スキーマ (products / product_aliases / sources / lottery_events / lottery_event_sources / notifications) が作成される
+- sources テーブルに 7 個のソース（公式系 4 / 小売系 2 / 店舗系 1）が seed される
+
+GHA からも `workflow_dispatch` で `job: bootstrap` を指定すれば同じ挙動。
+
+## 5. ジョブ構成
+
+`python -m pokebot <job>` で実行。`<job>` は:
+
+| job | 役割 |
+|---|---|
+| `product-sync` | ポケモン公式 products ページから商品マスタを upsert |
+| `lottery-watch` | 公式ニュース・ポケセンオンライン/店舗・ヨドバシ・ビック各 adapter から抽選候補を取得し lottery_events に upsert |
+| `notify-dispatch` | confirmed & 高信頼のみを LINE に送信（dedupe + per-run / per-day cap） |
+| `all` | 上記 3 つを順に実行。cron からはこれを使う想定 |
+| `bootstrap` | スキーマ + sources seed のみ |
+
+## 6. 動作確認
 
 - Actions タブ → `pokebot` ワークフロー → Run workflow で手動発火
-- ログで `source=xxx count=N` が出ていれば正常
-- 初回起動時に `CREATE TABLE IF NOT EXISTS` が自動実行されるので migration 手順は不要
+- 初回は `dry_run=true` のまま動かし、LINE 送信相当のログを確認する
+- `python scripts/status.py events` / `sources` / `notifications` で DB 側の状態を CLI で確認
 
-## 5. スケジュール
+## 7. スケジュール
 
-- `*/5 * * * *` (UTC) で 5 分ごとに実行
-- `concurrency.cancel-in-progress: true` で重複起動を防止
-- 1 ジョブは `timeout-minutes: 4` で強制終了
+- Phase 1 は安全確認が取れるまで `on.schedule` をコメントアウトしている
+- 再開時は `.github/workflows/pokebot.yml` の該当行を戻し、30 分間隔から検証を始める
 
-## 6. 停止・一時停止
+## 8. 停止・一時停止
 
 - 完全停止: `.github/workflows/pokebot.yml` の `on.schedule` をコメントアウトして push
 - 一時停止: Actions タブ → pokebot → `...` → Disable workflow
 
-## 7. 挙動メモ
+## 9. 挙動メモ
 
-- Daily report: JST 09:00 近辺の tick で前日の検知件数サマリを 1 回だけ送信 (`daily_reports` テーブルで重複排除)
-- Silence detector: 各ソースで 5 連続失敗 or 24h 検知ゼロが続くと警告通知 (6h 内は抑制)
-- 未送信イベントは `notified_at IS NULL` で残るので、LINE 送信失敗時も次の tick で自動再送
+- 通知フィルタ: `official_confirmation_status == 'confirmed'` かつ `confidence_score >= 90` のみ LINE 発火
+- dedupe: `notifications.dedupe_key` の一意制約でイベント単位に 1 回だけ送信
+- 失敗時再送: notifications row は `sent_at IS NULL` で残るので、次回 tick で再送される
+- cap: per-run / per-day の両方で洪水防止。Phase 1 は per-run=5 を推奨
 
-## 8. ローカル開発
+## 10. ローカル開発
 
 ```bash
 # PostgreSQL 16 を用意
@@ -68,8 +100,8 @@ pip install -e ".[dev]"
 # テスト
 pytest -v
 
-# ローカル実行 (.env に DATABASE_URL / LINE_* を書く)
-python -m pokebot
+# ローカル実行 (.env に DATABASE_URL / LINE_* / DRY_RUN=1 を書く)
+python -m pokebot all
 ```
 
 `.env` はリポジトリに含めない (`.gitignore` 済)。本番は GitHub Secrets を使う。
