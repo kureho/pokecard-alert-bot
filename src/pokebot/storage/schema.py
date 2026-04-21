@@ -109,4 +109,9 @@ WHERE status = 'active' AND sales_type = 'unknown';
 -- 2026-04-21: daily_summary 通知のため lottery_event_id を nullable に。
 -- 既に NULL 許可されている場合は no-op。
 ALTER TABLE notifications ALTER COLUMN lottery_event_id DROP NOT NULL;
+
+-- 2026-04-21: first-run seed で sent_at マークされた通知は実送信じゃないので
+-- per-day cap から除外するため sent_at を NULL に戻す。冪等。
+UPDATE notifications SET sent_at = NULL
+WHERE payload_summary = '[first-run seed; not sent]' AND sent_at IS NOT NULL;
 """

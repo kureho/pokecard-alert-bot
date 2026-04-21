@@ -118,27 +118,26 @@ async def _seed_notification_sent(
     *,
     lottery_event_id: int,
     dedupe_key: str,
-    now: datetime,
+    now: datetime,  # noqa: ARG001 - interface互換で残す (sent_at はセットしない)
 ) -> None:
-    """初回スクレイプ時、生成されたイベントに対し new 通知を即 "送信済み" として記録する。
+    """初回スクレイプ時、生成されたイベントに対し new 通知の dedupe_key を予約する。
 
-    これにより、次回 dispatch で同じ dedupe_key が try_claim 時に衝突して suppress される。
-    LINE には 1 件も送られない (洪水防止)。
+    次回 dispatch で同じ dedupe_key が try_claim 時に衝突して suppress される (LINE 非送信)。
+    ただし **sent_at は NULL のまま** にする: per-day cap は sent_at IS NOT NULL を
+    カウントするため、seed 分をカウントに含めないことで実送信数だけが cap の対象になる。
     """
     ndk = build_notification_dedupe_key(
         lottery_dedupe_key=dedupe_key,
         notification_type="new",
         content_version="v1",
     )
-    claim_id = await notif_repo.try_claim(
+    await notif_repo.try_claim(
         lottery_event_id=lottery_event_id,
         notification_type="new",
         channel="line",
         dedupe_key=ndk,
         payload_summary="[first-run seed; not sent]",
     )
-    if claim_id is not None:
-        await notif_repo.mark_sent(claim_id, now)
 
 
 async def job_lottery_watch() -> None:
