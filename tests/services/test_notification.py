@@ -297,6 +297,51 @@ async def test_dispatch_updates_skips_without_prior_new(db):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_suppresses_same_product_other_store(db):
+    """同じ product が別店舗 event として来ても 24h 以内の 2 件目以降は suppress。"""
+    await _seed_source(db)
+    svc = LotteryEventUpsertService(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        source_repo=SourceRepo(db),
+    )
+    now = datetime(2026, 4, 21, 12)
+    # 同じ product アビスアイ、異なる店舗 2 件
+    for store, suffix in [("浜松", "hama"), ("名古屋駅前", "nagoya")]:
+        c = Candidate(
+            product_name_raw="アビスアイ",
+            product_name_normalized="アビスアイ",
+            retailer_name="cardlabo",
+            store_name=store,
+            sales_type="lottery",
+            canonical_title=f"アビスアイ抽選 {store}",
+            source_name="pokemon_official_news",
+            source_url=f"https://x/{suffix}",
+            source_title=f"アビスアイ抽選 {store}",
+            raw_snapshot=f"h-{suffix}",
+            apply_start_at=datetime(2026, 5, 10, 14),
+            apply_end_at=datetime(2026, 5, 14, 23, 59),
+            extracted_payload={"body_fetched": True},
+        )
+        await svc.apply(c, now=now)
+
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    result = await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
+    # 最初の 1 件だけ送信、2 件目は同 product cooldown で suppress
+    assert result.new_sent == 1
+    assert result.suppressed == 1
+    assert len(notifier.sent) == 1
+
+
+@pytest.mark.asyncio
 async def test_dispatch_deadlines_fires_when_apply_end_near(db):
     """apply_end_at が 3h 以内に迫り、new 送信済みなら deadline 通知が送られる。"""
     eid = await _create_confirmed_event(db)

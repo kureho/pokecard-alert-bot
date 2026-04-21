@@ -29,6 +29,10 @@ DEFAULT_DEADLINE_WINDOW = timedelta(hours=3)
 # update 通知のクールダウン: new 送信後 / 前 update 送信後 これより短いと再発火しない。
 # 6時間 = 1日最大 4通まで (実質ノイズ防止)。
 UPDATE_COOLDOWN = timedelta(hours=6)
+# 同じ商品 (product_name_normalized) の new 通知クールダウン。
+# 「アビスアイ抽選」が 5店舗で出ても最初の 1店舗だけ通知し、以降 24h は suppress。
+# 翌日新規店舗が追加されれば改めて通知可。
+PRODUCT_NEW_COOLDOWN = timedelta(hours=24)
 
 CONFIRMATION_LABEL = {
     "confirmed": "[高信頼]",
@@ -156,6 +160,18 @@ class NotificationDispatcher:
         if event.official_confirmation_status != "confirmed":
             result.skipped_low_confidence += 1
             return
+
+        # Product 単位クールダウン: 同じ商品が他店舗で既に new 送信済み (24h以内) なら suppress。
+        # 「アビスアイ抽選」が浜松で通知済みなら、名古屋駅前/大須/静岡/岐阜の通知は抑止。
+        # 同じ商品情報の繰り返しを防ぎ、LINE 枠を温存する。
+        if notification_type == "new" and event.product_name_normalized:
+            last_product_sent = await self._notif.get_last_sent_for_product(
+                product_name_normalized=event.product_name_normalized,
+                notification_types=("new",),
+            )
+            if last_product_sent is not None and (now - last_product_sent) < PRODUCT_NEW_COOLDOWN:
+                result.suppressed += 1
+                return
 
         # dedupe key: new は1度だけ送る。update は last_seen_at の分単位 ISO で差別化し、
         # 情報量増加のたびに 1 本だけ送れるようにする。

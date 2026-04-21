@@ -476,3 +476,26 @@ class NotificationRepo:
                 lottery_event_id, notification_type,
             )
         return row["last_sent"] if row and row["last_sent"] else None
+
+    async def get_last_sent_for_product(
+        self,
+        *,
+        product_name_normalized: str,
+        notification_types: tuple[str, ...] = ("new",),
+    ) -> datetime | None:
+        """指定 product_name_normalized に紐づく lottery_events を対象に、
+        指定 type の最新 sent_at を返す。product 単位の重複通知抑止に使用。
+        """
+        if not product_name_normalized:
+            return None
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT MAX(n.sent_at) AS last_sent
+                   FROM notifications n
+                   JOIN lottery_events le ON le.id = n.lottery_event_id
+                   WHERE le.product_name_normalized = $1
+                     AND n.notification_type = ANY($2::text[])
+                     AND n.sent_at IS NOT NULL""",
+                product_name_normalized, list(notification_types),
+            )
+        return row["last_sent"] if row and row["last_sent"] else None
