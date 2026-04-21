@@ -391,6 +391,33 @@ class LotteryEventRepo:
             product_name_normalized=r["product_name_normalized"],
         )
 
+    async def list_other_stores_for_product(
+        self,
+        *,
+        product_name_normalized: str,
+        exclude_event_id: int,
+        limit: int = 10,
+    ) -> list[tuple[str, str]]:
+        """同じ product の他の active event の (retailer_name, store_name) ペアを返す。
+
+        new 通知時に「他N店舗でも取扱」を追記するための情報取得に使う。
+        store_name が NULL の event も拾えるよう COALESCE で空文字に置換する。
+        """
+        if not product_name_normalized:
+            return []
+        async with self._db.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT DISTINCT retailer_name, COALESCE(store_name, '') AS store_name
+                   FROM lottery_events
+                   WHERE product_name_normalized = $1
+                     AND status = 'active'
+                     AND id != $2
+                   ORDER BY retailer_name, store_name
+                   LIMIT $3""",
+                product_name_normalized, exclude_event_id, limit,
+            )
+        return [(r["retailer_name"], r["store_name"] or "") for r in rows]
+
     async def count_distinct_sources_for_product(
         self,
         product_name_normalized: str | None,

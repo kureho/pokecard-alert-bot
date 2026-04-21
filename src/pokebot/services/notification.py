@@ -30,9 +30,10 @@ DEFAULT_DEADLINE_WINDOW = timedelta(hours=3)
 # 6時間 = 1日最大 4通まで (実質ノイズ防止)。
 UPDATE_COOLDOWN = timedelta(hours=6)
 # 同じ商品 (product_name_normalized) の new 通知クールダウン。
-# 「アビスアイ抽選」が 5店舗で出ても最初の 1店舗だけ通知し、以降 24h は suppress。
-# 翌日新規店舗が追加されれば改めて通知可。
-PRODUCT_NEW_COOLDOWN = timedelta(hours=24)
+# 「アビスアイ抽選」が複数店舗で出ても最初の 1店舗だけ通知し、以降 72h は suppress。
+# new 通知内に「他店舗でも取扱」をインライン化するため、期間を 24h → 72h に拡大し
+# 同商品の重複通知を強く抑える。
+PRODUCT_NEW_COOLDOWN = timedelta(hours=72)
 
 CONFIRMATION_LABEL = {
     "confirmed": "[高信頼]",
@@ -75,7 +76,11 @@ def _format_dt(dt: datetime | None) -> str:
 
 
 def format_event_message(
-    event: LotteryEvent, *, product: Product | None = None, source_note: str = ""
+    event: LotteryEvent,
+    *,
+    product: Product | None = None,
+    source_note: str = "",
+    other_stores: list[str] | None = None,
 ) -> str:
     label = CONFIRMATION_LABEL.get(event.official_confirmation_status, "[不明]")
     stype = SALES_TYPE_LABEL.get(event.sales_type, event.sales_type)
@@ -100,6 +105,13 @@ def format_event_message(
         lines.append(f"備考: {event.conditions_text}")
     if source_note:
         lines.append(f"情報源: {source_note}")
+    # new 通知における他店舗情報を URL の前に追記。複数店舗で並行取扱のある場合に
+    # 「他店舗も探してみる」という行動を促す意図。
+    if other_stores:
+        shown = other_stores[:3]
+        extra = len(other_stores) - len(shown)
+        label_text = "、".join(shown) + (f" 他{extra}店舗" if extra > 0 else "")
+        lines.append(f"▸ 他店舗: {label_text}")
     if event.source_primary_url:
         lines.append(event.source_primary_url)
     return "\n".join(lines)
@@ -195,7 +207,25 @@ class NotificationDispatcher:
                     break
 
         source_note = SOURCE_NOTE_BY_RETAILER.get(event.retailer_name, event.retailer_name)
-        summary = format_event_message(event, product=product, source_note=source_note)
+
+        # new 通知時のみ、同一 product の他 active event を 1通に集約表示する。
+        # update 通知では last_seen_at 差分がメインなので他店舗情報は省く。
+        other_stores_display: list[str] = []
+        if notification_type == "new" and event.product_name_normalized:
+            other_pairs = await self._lottery.list_other_stores_for_product(
+                product_name_normalized=event.product_name_normalized,
+                exclude_event_id=event.id,
+            )
+            # store_name が空なら retailer_name を代わりに表示 (Amazon 等 online 販路)。
+            for retailer, store in other_pairs:
+                other_stores_display.append(store if store else retailer)
+
+        summary = format_event_message(
+            event,
+            product=product,
+            source_note=source_note,
+            other_stores=other_stores_display,
+        )
 
         # DRY_RUN: notifications テーブルに触れず、would-send ログのみ出す。
         # これにより本番 run 時に過去の DRY_RUN 予約が suppress 原因にならない。

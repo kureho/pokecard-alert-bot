@@ -298,7 +298,7 @@ async def test_dispatch_updates_skips_without_prior_new(db):
 
 @pytest.mark.asyncio
 async def test_dispatch_suppresses_same_product_other_store(db):
-    """同じ product が別店舗 event として来ても 24h 以内の 2 件目以降は suppress。"""
+    """同じ product が別店舗 event として来ても 72h 以内の 2 件目以降は suppress。"""
     await _seed_source(db)
     svc = LotteryEventUpsertService(
         lottery_repo=LotteryEventRepo(db),
@@ -436,3 +436,169 @@ def test_format_event_message_has_label():
     assert "5/10 14:00" in msg
     assert "5/14 23:59" in msg
     assert "5/16 11:00" in msg
+
+
+def test_format_event_message_includes_other_stores():
+    """other_stores 指定時、URL の前に「▸ 他店舗:」行が追加される。"""
+    from pokebot.storage.repos import LotteryEvent
+
+    ev = LotteryEvent(
+        id=1,
+        product_id=None,
+        retailer_name="cardlabo",
+        store_name="浜松",
+        canonical_title="アビスアイ抽選 浜松",
+        sales_type="lottery",
+        apply_start_at=datetime(2026, 5, 10, 14),
+        apply_end_at=datetime(2026, 5, 14, 23, 59),
+        result_at=None,
+        purchase_start_at=None,
+        purchase_end_at=None,
+        purchase_limit_text=None,
+        conditions_text=None,
+        source_primary_url="https://ex",
+        official_confirmation_status="confirmed",
+        confidence_score=95,
+        dedupe_key="k1",
+        status="active",
+        first_seen_at=datetime(2026, 4, 21),
+        last_seen_at=datetime(2026, 4, 21),
+    )
+    # 3 店舗以内はそのまま列挙
+    msg = format_event_message(
+        ev, other_stores=["名古屋駅前", "名古屋大須", "静岡"],
+    )
+    assert "▸ 他店舗: 名古屋駅前、名古屋大須、静岡" in msg
+    # URL より前に出る
+    assert msg.index("▸ 他店舗") < msg.index("https://ex")
+
+    # 4 店舗以上は先頭 3 件 + 「他N店舗」
+    msg2 = format_event_message(
+        ev, other_stores=["名古屋駅前", "名古屋大須", "静岡", "岐阜", "豊橋"],
+    )
+    assert "▸ 他店舗: 名古屋駅前、名古屋大須、静岡 他2店舗" in msg2
+
+    # 省略時は行自体が現れない
+    msg3 = format_event_message(ev)
+    assert "他店舗" not in msg3
+
+
+@pytest.mark.asyncio
+async def test_dispatch_new_message_mentions_other_stores(db):
+    """同 product の他 active event が存在すれば new 通知に「▸ 他店舗」行が入る。"""
+    await _seed_source(db)
+    svc = LotteryEventUpsertService(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        source_repo=SourceRepo(db),
+    )
+    now = datetime(2026, 4, 21, 12)
+    # 3 件: 最初が通知対象、残り 2 件が「他店舗」として表示される
+    for store, suffix in [
+        ("浜松", "hama"),
+        ("名古屋駅前", "nagoya-ek"),
+        ("静岡", "shizu"),
+    ]:
+        c = Candidate(
+            product_name_raw="アビスアイ",
+            product_name_normalized="アビスアイ",
+            retailer_name="cardlabo",
+            store_name=store,
+            sales_type="lottery",
+            canonical_title=f"アビスアイ抽選 {store}",
+            source_name="pokemon_official_news",
+            source_url=f"https://x/{suffix}",
+            source_title=f"アビスアイ抽選 {store}",
+            raw_snapshot=f"h-{suffix}",
+            apply_start_at=datetime(2026, 5, 10, 14),
+            apply_end_at=datetime(2026, 5, 14, 23, 59),
+            extracted_payload={"body_fetched": True},
+        )
+        await svc.apply(c, now=now)
+
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    result = await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
+    assert result.new_sent == 1
+    msg = notifier.sent[0]
+    # 他店舗行が存在し、他 2 件の store 名が含まれる
+    assert "▸ 他店舗" in msg
+    other_stores_in_message = sum(
+        1 for s in ("浜松", "名古屋駅前", "静岡") if s in msg
+    )
+    # 通知対象の店舗 (1件) + 他店舗に並ぶ (2件) = 3
+    assert other_stores_in_message == 3
+
+
+@pytest.mark.asyncio
+async def test_product_new_cooldown_is_72h(db):
+    """PRODUCT_NEW_COOLDOWN = 72h。48h 経過後でも同 product の 2 件目は suppress される。"""
+    from pokebot.services.notification import PRODUCT_NEW_COOLDOWN
+
+    assert PRODUCT_NEW_COOLDOWN == timedelta(hours=72)
+
+    await _seed_source(db)
+    svc = LotteryEventUpsertService(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        source_repo=SourceRepo(db),
+    )
+    t0 = datetime(2026, 4, 21, 12)
+    c1 = Candidate(
+        product_name_raw="アビスアイ",
+        product_name_normalized="アビスアイ",
+        retailer_name="cardlabo",
+        store_name="浜松",
+        sales_type="lottery",
+        canonical_title="アビスアイ抽選 浜松",
+        source_name="pokemon_official_news",
+        source_url="https://x/hama",
+        source_title="アビスアイ抽選 浜松",
+        raw_snapshot="h-hama",
+        apply_start_at=datetime(2026, 5, 10, 14),
+        apply_end_at=datetime(2026, 5, 14, 23, 59),
+        extracted_payload={"body_fetched": True},
+    )
+    await svc.apply(c1, now=t0)
+
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    r1 = await disp.dispatch(now=t0 + timedelta(minutes=5))
+    assert r1.new_sent == 1
+
+    # 48h 経過後に別店舗の新規 event を追加 (旧 24h cooldown では解除されていたはず)
+    t1 = t0 + timedelta(hours=48)
+    c2 = Candidate(
+        product_name_raw="アビスアイ",
+        product_name_normalized="アビスアイ",
+        retailer_name="cardlabo",
+        store_name="名古屋駅前",
+        sales_type="lottery",
+        canonical_title="アビスアイ抽選 名古屋駅前",
+        source_name="pokemon_official_news",
+        source_url="https://x/nagoya",
+        source_title="アビスアイ抽選 名古屋駅前",
+        raw_snapshot="h-nagoya",
+        apply_start_at=datetime(2026, 5, 10, 14),
+        apply_end_at=datetime(2026, 5, 14, 23, 59),
+        extracted_payload={"body_fetched": True},
+    )
+    await svc.apply(c2, now=t1)
+    r2 = await disp.dispatch(now=t1 + timedelta(minutes=5))
+    # 72h 以内なので依然 suppress される
+    assert r2.new_sent == 0
+    assert r2.suppressed >= 1
