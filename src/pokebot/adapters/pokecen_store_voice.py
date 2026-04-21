@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from time import mktime
 
 import feedparser
 
-from ..lib.jp_datetime import parse_jp_datetime
+from ..lib.body_extractor import extract_body_info
 from ..lib.normalize import normalize_product_name
 from ..lib.snapshot import content_hash
 from ..lib.text_clean import clean_text
+from ..lib.title_classifier import TitleCategory, classify_title
 from .base import Candidate, SourceAdapter
 from .http import fetch_text
 from .registry import register_adapter
+
+log = logging.getLogger(__name__)
 
 SHOPS = [
     ("megatokyo", "メガトウキョー"),
@@ -33,27 +37,28 @@ SHOPS = [
     ("okinawa", "オキナワ"),
 ]
 
-_KEYWORDS = ("抽選", "販売方法", "再販", "入荷", "応募", "当選", "予約")
-
-
-def _classify(title: str) -> str:
-    if "抽選" in title:
-        return "lottery"
-    if "再販" in title or "入荷" in title:
-        return "first_come"
-    return "unknown"
-
 
 @register_adapter("pokemoncenter_store_voice")
 class PokecenStoreVoiceAdapter(SourceAdapter):
     """ポケセン各店舗の atom.xml を横断し、抽選/販売告知系エントリを抽出。"""
 
-    def __init__(self, *, feeds: dict[str, str] | None = None) -> None:
-        """feeds: shop_key -> xml 内容 のマップ。テスト用に差し替え可能。"""
+    def __init__(
+        self,
+        *,
+        feeds: dict[str, str] | None = None,
+        body_fetcher=None,
+        max_body_fetch: int = 30,
+    ) -> None:
+        """feeds: shop_key -> xml 内容 のマップ。テスト用に差し替え可能。
+        body_fetcher: 個別記事 html 取得。Noneなら fetch_text 使用。
+        """
         self._feeds = feeds
+        self._body_fetcher = body_fetcher
+        self._max_body_fetch = max_body_fetch
 
     async def run(self) -> list[Candidate]:
         out: list[Candidate] = []
+        fetched = 0
         for shop_key, shop_display in SHOPS:
             try:
                 if self._feeds is not None:
@@ -72,32 +77,77 @@ class PokecenStoreVoiceAdapter(SourceAdapter):
                 link = e.get("link") or ""
                 if not title or not link:
                     continue
-                if not any(k in title for k in _KEYWORDS):
+
+                analysis = classify_title(title)
+                if analysis.category in (
+                    TitleCategory.IRRELEVANT,
+                    TitleCategory.LOTTERY_CLOSED,
+                    TitleCategory.LOTTERY_RESULT,
+                ):
                     continue
+
                 ts = None
                 if getattr(e, "published_parsed", None):
                     ts = datetime.fromtimestamp(mktime(e.published_parsed))
-                sales_type = _classify(title)
-                apply_dt = parse_jp_datetime(title)
+
+                body_info = None
+                body_html = None
+                if fetched < self._max_body_fetch:
+                    try:
+                        body_html = (
+                            await self._body_fetcher(link) if self._body_fetcher
+                            else await fetch_text(link)
+                        )
+                        body_info = extract_body_info(body_html)
+                        fetched += 1
+                    except Exception as ex:  # noqa: BLE001
+                        log.warning(
+                            "store_voice body fetch failed for %s: %s", link, ex
+                        )
+
+                # 発売告知のみで本文に応募情報が無ければ skip
+                if analysis.category == TitleCategory.RELEASE_ANNOUNCE:
+                    if body_info is None or not body_info.has_any_date:
+                        continue
+
+                apply_start = body_info.apply_start_at if body_info else None
+                apply_end = body_info.apply_end_at if body_info else None
+                result_at = body_info.result_at if body_info else None
+                purchase_start = body_info.purchase_start_at if body_info else None
+                purchase_end = body_info.purchase_end_at if body_info else None
+                purchase_limit = body_info.purchase_limit_text if body_info else None
+                conditions = body_info.conditions_text if body_info else None
+
                 store_label = f"ポケモンセンター{shop_display}"
+                snapshot_src = body_html if body_html else (title + "|" + link)
+
                 out.append(Candidate(
                     product_name_raw=clean_text(title),
                     product_name_normalized=normalize_product_name(title),
                     retailer_name="pokemoncenter",
                     store_name=store_label,
-                    sales_type=sales_type,
+                    sales_type=analysis.inferred_sales_type,
                     canonical_title=title,
-                    apply_start_at=apply_dt,
+                    apply_start_at=apply_start,
+                    apply_end_at=apply_end,
+                    result_at=result_at,
+                    purchase_start_at=purchase_start,
+                    purchase_end_at=purchase_end,
+                    purchase_limit_text=purchase_limit,
+                    conditions_text=conditions,
                     source_name="pokemoncenter_store_voice",
                     source_url=link,
                     source_title=title,
                     source_published_at=ts,
-                    raw_snapshot=content_hash(title + "|" + link),
+                    raw_snapshot=content_hash(snapshot_src),
                     extracted_payload={
                         "shop_key": shop_key,
                         "shop_display": shop_display,
                         "title": title,
                         "url": link,
+                        "title_category": str(analysis.category),
+                        "body_fetched": body_info is not None,
+                        "body_score": body_info.score if body_info else 0,
                     },
                 ))
         return out
