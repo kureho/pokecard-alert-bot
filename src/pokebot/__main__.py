@@ -46,6 +46,10 @@ LOTTERY_WATCH_ADAPTERS = [
     "twitter_pokecayoyaku",
     "twitter_pokecamatomeru",
     "twitter_pokecawatch",
+    "twitter_beatdown",
+    "twitter_ys_info",
+    "twitter_usagiya_jounai",
+    "twitter_t_sanoTCG",
 ]
 
 

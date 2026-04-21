@@ -67,6 +67,33 @@ SEED_SOURCES: list[tuple[str, str, str, int]] = [
         "https://syndication.twitter.com/srv/timeline-profile/screen-name/pokecawatch",
         80,
     ),
+    # 小規模店の独自速報 (trust=75)。フォロワー範囲は狭いが、店舗独自の
+    # 抽選/招待告知を先出しすることが多い。クロスソース corroboration で
+    # 他ソースと一致したら confirmed 昇格。
+    (
+        "twitter_beatdown",
+        "social",
+        "https://syndication.twitter.com/srv/timeline-profile/screen-name/BeatDownManager",
+        75,
+    ),
+    (
+        "twitter_ys_info",
+        "social",
+        "https://syndication.twitter.com/srv/timeline-profile/screen-name/YS_INFO",
+        75,
+    ),
+    (
+        "twitter_usagiya_jounai",
+        "social",
+        "https://syndication.twitter.com/srv/timeline-profile/screen-name/usagiya_jounai",
+        75,
+    ),
+    (
+        "twitter_t_sanoTCG",
+        "social",
+        "https://syndication.twitter.com/srv/timeline-profile/screen-name/T_sanoTCG",
+        75,
+    ),
 ]
 
 

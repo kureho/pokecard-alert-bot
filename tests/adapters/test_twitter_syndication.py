@@ -69,6 +69,34 @@ async def test_adapter_run_extracts_pokemon_tweets_with_retailer():
     assert c.store_name == "@pokecayoyaku"
 
 
+def test_new_small_store_adapters_registered():
+    """小規模店 4 アカウントの adapter class が正しく registry 登録されている。"""
+    import pokebot.adapters  # noqa: F401 — package import triggers registrations
+    from pokebot.adapters.registry import AdapterRegistry
+    from pokebot.adapters.twitter_syndication import (
+        TwitterBeatdownAdapter,
+        TwitterTSanoTCGAdapter,
+        TwitterUsagiyaJounaiAdapter,
+        TwitterYsInfoAdapter,
+    )
+
+    # class の account 属性が正しい
+    assert TwitterBeatdownAdapter.account == "BeatDownManager"
+    assert TwitterYsInfoAdapter.account == "YS_INFO"
+    assert TwitterUsagiyaJounaiAdapter.account == "usagiya_jounai"
+    assert TwitterTSanoTCGAdapter.account == "T_sanoTCG"
+
+    # registry で source_name 経由で解決できる
+    for name in (
+        "twitter_beatdown",
+        "twitter_ys_info",
+        "twitter_usagiya_jounai",
+        "twitter_t_sanoTCG",
+    ):
+        adapter = AdapterRegistry.get(name)
+        assert adapter is not None, f"adapter {name} not registered"
+
+
 @pytest.mark.asyncio
 async def test_adapter_filters_non_pokemon_tweets():
     # ポケモン kwなしの空 timeline fixture

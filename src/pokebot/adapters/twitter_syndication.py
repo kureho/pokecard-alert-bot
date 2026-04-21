@@ -220,3 +220,23 @@ class TwitterPokecamatomeruAdapter(_TwitterSyndicationBase):
 @register_adapter("twitter_pokecawatch")
 class TwitterPokecawatchAdapter(_TwitterSyndicationBase):
     account = "pokecawatch"
+
+
+@register_adapter("twitter_beatdown")
+class TwitterBeatdownAdapter(_TwitterSyndicationBase):
+    account = "BeatDownManager"
+
+
+@register_adapter("twitter_ys_info")
+class TwitterYsInfoAdapter(_TwitterSyndicationBase):
+    account = "YS_INFO"
+
+
+@register_adapter("twitter_usagiya_jounai")
+class TwitterUsagiyaJounaiAdapter(_TwitterSyndicationBase):
+    account = "usagiya_jounai"
+
+
+@register_adapter("twitter_t_sanoTCG")
+class TwitterTSanoTCGAdapter(_TwitterSyndicationBase):
+    account = "T_sanoTCG"
