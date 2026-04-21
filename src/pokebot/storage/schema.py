@@ -141,4 +141,35 @@ DELETE FROM notifications
 WHERE sent_at IS NULL
   AND notification_type IN ('new', 'update')
   AND created_at < TIMESTAMP '2026-04-21 07:15:00';
+
+-- 2026-04-22: evidence 層刷新 (Dispatch1)
+--   confidence_level 4分割 (confirmed_strong / confirmed_medium / candidate / conflicting) に移行。
+--   旧 official_confirmation_status は残し、互換マッピング経由で更新。
+--   全カラム nullable / DEFAULT 'unknown' で既存 active event は NULL のまま段階的に enrich される。
+--   ALTER → UPDATE → CREATE INDEX の順で冪等に実行。
+ALTER TABLE lottery_events ADD COLUMN IF NOT EXISTS application_url TEXT;
+ALTER TABLE lottery_events ADD COLUMN IF NOT EXISTS product_url TEXT;
+ALTER TABLE lottery_events ADD COLUMN IF NOT EXISTS entry_method TEXT DEFAULT 'unknown';
+ALTER TABLE lottery_events ADD COLUMN IF NOT EXISTS sale_status TEXT DEFAULT 'unknown';
+ALTER TABLE lottery_events ADD COLUMN IF NOT EXISTS page_fingerprint TEXT;
+ALTER TABLE lottery_events ADD COLUMN IF NOT EXISTS evidence_score INTEGER;
+ALTER TABLE lottery_events ADD COLUMN IF NOT EXISTS evidence_summary TEXT;
+ALTER TABLE lottery_events ADD COLUMN IF NOT EXISTS retailer_event_id TEXT;
+ALTER TABLE lottery_events ADD COLUMN IF NOT EXISTS confidence_level TEXT;
+
+-- 既存 NULL の sale_status / entry_method を 'unknown' で埋める (冪等)
+UPDATE lottery_events SET sale_status = 'unknown' WHERE sale_status IS NULL;
+UPDATE lottery_events SET entry_method = 'unknown' WHERE entry_method IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_lottery_events_confidence_level
+    ON lottery_events(confidence_level);
+CREATE INDEX IF NOT EXISTS idx_lottery_events_application_url
+    ON lottery_events(application_url);
+
+-- lottery_event_sources: evidence_type emit & 構造化フィールド
+ALTER TABLE lottery_event_sources ADD COLUMN IF NOT EXISTS evidence_type TEXT DEFAULT 'unknown';
+ALTER TABLE lottery_event_sources ADD COLUMN IF NOT EXISTS evidence_strength INTEGER;
+ALTER TABLE lottery_event_sources ADD COLUMN IF NOT EXISTS selector_version TEXT;
+ALTER TABLE lottery_event_sources ADD COLUMN IF NOT EXISTS canonical_fields_json JSONB;
+ALTER TABLE lottery_event_sources ADD COLUMN IF NOT EXISTS raw_text_excerpt TEXT;
 """
