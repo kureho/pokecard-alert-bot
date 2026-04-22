@@ -42,7 +42,6 @@ PRODUCT_SYNC_ADAPTERS = ["pokemon_official_products"]
 LOTTERY_WATCH_ADAPTERS = [
     "pokemon_official_news",
     "pokemoncenter_online_lottery",
-    "pokemoncenter_online_guide",
     "pokemoncenter_store_voice",
     "c_labo_blog",
     "twitter_pokecayoyaku",
@@ -64,7 +63,6 @@ LOTTERY_WATCH_ADAPTERS = [
 FAST_LANE_ADAPTERS = [
     "pokemon_official_news",
     "pokemoncenter_online_lottery",
-    "pokemoncenter_online_guide",
     "pokemoncenter_store_voice",
     "rakuten_books_entry",
     "yamada_lottery",

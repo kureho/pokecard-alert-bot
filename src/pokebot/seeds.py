@@ -10,6 +10,8 @@ from .storage.repos import SourceRepo
 # - yodobashi_lottery / amiami_lottery: 403 Forbidden (GHA US IP block)
 # - amazon_search: 503 (Amazon Bot detection)
 # - biccamera_lottery / pokecawatch_chusen: empty response
+# - pokemoncenter_online_guide: adapter が Candidate を 1 件も返さない health 専用。
+#   2026-04-22 から 403 が発生し silence 警告のみ無駄に発火するため無効化。
 DISABLED_SOURCES: frozenset[str] = frozenset(
     {
         "yodobashi_lottery",
@@ -17,6 +19,7 @@ DISABLED_SOURCES: frozenset[str] = frozenset(
         "amiami_lottery",
         "pokecawatch_chusen",
         "amazon_search",
+        "pokemoncenter_online_guide",
     }
 )
 
