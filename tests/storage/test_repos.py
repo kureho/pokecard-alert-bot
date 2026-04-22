@@ -95,3 +95,26 @@ async def test_seed_sources_is_idempotent(db):
     assert "pokemon_official_products" in names
     assert "pokemoncenter_store_voice" in names
     assert len(sources) >= 7
+
+
+@pytest.mark.asyncio
+async def test_seed_disabled_sources_are_inactive(db):
+    """DISABLED_SOURCES に入っている source は seed 後 is_active=False。
+
+    silence_detector は is_active=TRUE だけを見るので、無効化された adapter は
+    監視警告を発火しない。
+    """
+    from pokebot.seeds import DISABLED_SOURCES, seed_sources
+
+    assert "amazon_search" in DISABLED_SOURCES  # ガード: 期待する挙動を失ったら即落ちる
+    repo = SourceRepo(db)
+    await seed_sources(repo)
+    # 失敗中 adapter は is_active=False で保存される
+    for name in DISABLED_SOURCES:
+        s = await repo.get_by_name(name)
+        assert s is not None, name
+        assert s.is_active is False, f"{name} should be inactive"
+    # 通常 adapter は is_active=True
+    for name in ("pokemon_official_news", "c_labo_blog", "rakuten_books_entry"):
+        s = await repo.get_by_name(name)
+        assert s is not None and s.is_active is True, name

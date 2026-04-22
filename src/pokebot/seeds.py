@@ -4,6 +4,22 @@ from __future__ import annotations
 
 from .storage.repos import SourceRepo
 
+# 2026-04-22: 長期失敗で一時的に無効化する source。is_active=False でDBに保存され、
+# silence_detector / adapter dispatch の両方から無視される。
+# 復旧確認できたら set から外す。
+# - yodobashi_lottery / amiami_lottery: 403 Forbidden (GHA US IP block)
+# - amazon_search: 503 (Amazon Bot detection)
+# - biccamera_lottery / pokecawatch_chusen: empty response
+DISABLED_SOURCES: frozenset[str] = frozenset(
+    {
+        "yodobashi_lottery",
+        "biccamera_lottery",
+        "amiami_lottery",
+        "pokecawatch_chusen",
+        "amazon_search",
+    }
+)
+
 # (source_name, source_type, base_url, trust_score)
 SEED_SOURCES: list[tuple[str, str, str, int]] = [
     (
@@ -144,5 +160,5 @@ async def seed_sources(repo: SourceRepo) -> None:
             source_type=stype,
             base_url=url,
             trust_score=trust,
-            is_active=True,
+            is_active=name not in DISABLED_SOURCES,
         )

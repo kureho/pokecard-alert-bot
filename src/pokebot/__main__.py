@@ -33,16 +33,18 @@ log = logging.getLogger("pokebot")
 
 # 各 Job に含める adapter (sources テーブル側の source_name と一致)
 PRODUCT_SYNC_ADAPTERS = ["pokemon_official_products"]
+# 2026-04-22: 以下の adapter は長期間失敗中のため LOTTERY_WATCH から除外。
+# seeds.py の DISABLED_SOURCES でも is_active=False にして silence warning も止める。
+# - yodobashi_lottery / amiami_lottery: GHA US IP で 403 Forbidden
+# - amazon_search: Bot 検知で 503
+# - biccamera_lottery / pokecawatch_chusen: empty response (構造変更 or block)
+# 復旧時は seeds.DISABLED_SOURCES と下記リストから戻す。
 LOTTERY_WATCH_ADAPTERS = [
     "pokemon_official_news",
     "pokemoncenter_online_lottery",
     "pokemoncenter_online_guide",
     "pokemoncenter_store_voice",
-    "yodobashi_lottery",
-    "biccamera_lottery",
     "c_labo_blog",
-    "amiami_lottery",
-    "pokecawatch_chusen",
     "twitter_pokecayoyaku",
     "twitter_pokecamatomeru",
     "twitter_pokecawatch",
@@ -51,7 +53,6 @@ LOTTERY_WATCH_ADAPTERS = [
     "twitter_usagiya_jounai",
     "twitter_t_sanoTCG",
     "nyuka_now_news",
-    "amazon_search",
     "rakuten_books_entry",
     "yamada_lottery",
     "hbst_lottery",
@@ -101,9 +102,10 @@ async def _run_adapter(source_name: str, source_repo: SourceRepo, now: datetime)
         log.warning("adapter not found: %s", source_name)
         return []
     source = await source_repo.get_by_name(source_name)
-    # Twitter syndication API は連続アクセスで 429 を返すので pacing を入れる
+    # Twitter syndication API は連続アクセスで 429 を返すので pacing を入れる。
+    # 2026-04-22: 2s では 7 アカウントで全 429。10s に強化 (7×10=70s, timeout 12min 内)。
     if source_name.startswith("twitter_"):
-        await asyncio.sleep(2)
+        await asyncio.sleep(10)
     try:
         candidates = await adapter.run()
         log.info("adapter %s returned %d candidates", source_name, len(candidates))
