@@ -33,14 +33,16 @@ log = logging.getLogger("pokebot")
 
 # 各 Job に含める adapter (sources テーブル側の source_name と一致)
 PRODUCT_SYNC_ADAPTERS = ["pokemon_official_products"]
-# 2026-04-22〜23: 以下の adapter は長期間失敗中のため LOTTERY_WATCH から除外。
-# seeds.py の DISABLED_SOURCES でも is_active=False にして silence warning も止める。
-# - yodobashi_lottery / amiami_lottery: GHA US IP で 403 Forbidden
-# - amazon_search: Bot 検知で 503
-# - biccamera_lottery / pokecawatch_chusen: empty response (構造変更 or block)
-# - pokemoncenter_online_guide: health check 専用で candidate を返さない設計。403 でノイズのみ
-# - twitter_* (7 件): pacing 10s でも全 429。公式 API v2 へ移行するまで休止
-# 復旧時は seeds.DISABLED_SOURCES と下記リストから戻す。
+# 2026-04-23〜24: Supabase edge function (fetch-jp) proxy 経由で以下を復活:
+# - amazon_search: proxy 経由で 200 (Bot 検知回避)
+# - amiami_lottery: proxy 経由 + 最新 Chrome UA で 200
+# 以下は Akamai の HTTP/2 fingerprint block で Deno proxy でも突破不可 (保留):
+# - yodobashi_lottery / biccamera_lottery
+# 以下は現行状態のまま disable:
+# - pokemoncenter_online_guide: health check 専用で candidate を返さない設計
+# - pokecawatch_chusen: 構造変更 or block
+# - twitter_* (7 件): syndication 429。公式 API v2 へ移行するまで休止
+# - nyuka_now_news: audit 結果でまとめ記事系の質観点に合わず
 LOTTERY_WATCH_ADAPTERS = [
     "pokemon_official_news",
     "pokemoncenter_online_lottery",
@@ -49,6 +51,8 @@ LOTTERY_WATCH_ADAPTERS = [
     "rakuten_books_entry",
     "yamada_lottery",
     "hbst_lottery",
+    "amazon_search",
+    "amiami_lottery",
 ]
 
 # Fast lane: 公式 + 主要販路の entry_page/store_notice 系だけを短周期で回す。

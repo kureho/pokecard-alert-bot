@@ -29,9 +29,11 @@ const ALLOWED_HOSTS: Set<string> = new Set([
   "www.suruga-ya.jp",
 ]);
 
+// 最新 Chrome の UA を使う。Yodobashi / Bic の HTTP/2 stream error や amiami の 403 対策。
+// 古い UA は容易に Bot 判定される。
 const USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 " +
-  "(KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 function cors(): Record<string, string> {
   return {
@@ -106,12 +108,25 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    // Chrome が送る header を一通り付与して Bot 判定を回避する。
+    // Accept-Encoding を付けるとレスポンスが gzip で返ってくるが、Deno fetch は自動展開する。
     const upstream = await fetch(parsed.toString(), {
       headers: {
         "User-Agent": USER_AGENT,
         "Accept":
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ja-JP,ja;q=0.9",
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"macOS"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
       },
       redirect: "follow",
     });

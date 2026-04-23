@@ -106,7 +106,8 @@ async def test_seed_disabled_sources_are_inactive(db):
     """
     from pokebot.seeds import DISABLED_SOURCES, seed_sources
 
-    assert "amazon_search" in DISABLED_SOURCES  # ガード: 期待する挙動を失ったら即落ちる
+    # ガード: 期待する挙動を失ったら即落ちる (yodobashi は Akamai block で現状も disable)
+    assert "yodobashi_lottery" in DISABLED_SOURCES
     repo = SourceRepo(db)
     await seed_sources(repo)
     # 失敗中 adapter は is_active=False で保存される
