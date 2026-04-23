@@ -77,6 +77,10 @@ jobs:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # JP リージョン proxy (fetch-jp edge function)。両方セットされたときのみ
+          # PROXY_HOSTS 対象 URL が proxy 経由で fetch される。未設定時は直接 fetch。
+          SUPABASE_FETCH_JP_URL: ${{ secrets.SUPABASE_FETCH_JP_URL }}
+          SUPABASE_FETCH_JP_KEY: ${{ secrets.SUPABASE_FETCH_JP_KEY }}
           LOG_LEVEL: INFO
           # GHA runner は UTC だが、datetime.now() を JST 基準で扱いたい
           # (daily_summary DAILY_REPORT_JST="09:00" を JST 09:00 窓で発火するため)。
