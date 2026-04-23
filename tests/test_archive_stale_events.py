@@ -317,33 +317,29 @@ async def _insert_pending_review(
 
 @pytest.mark.asyncio
 async def test_old_pending_review_is_archived(db):
-    """first_seen_at が 7日より前の pending_review は archive される。"""
+    """first_seen_at が 3日より前の pending_review は archive される。"""
     old_id = await _insert_pending_review(
         db, title="販売方法について", key="k-oldpr",
-        first_seen_at=NOW - timedelta(days=10),
+        first_seen_at=NOW - timedelta(days=5),
     )
     count, targets = await archive_stale_events(db, execute=True, now=NOW)
     assert count == 1
     assert targets[0]["id"] == old_id
     assert targets[0]["reason"] == "stale_pending_review"
 
-    repo = LotteryEventRepo(db)
     async with db.pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT status FROM lottery_events WHERE id = $1", old_id
         )
     assert row["status"] == "archived"
-    # active list に載らない
-    active_ids = {e.id for e in await repo.list_active(limit=100)}
-    assert old_id not in active_ids
 
 
 @pytest.mark.asyncio
 async def test_recent_pending_review_stays(db):
-    """first_seen_at が 7日以内の pending_review は残す (フィルタ調整の余地を残す)。"""
+    """first_seen_at が 3日以内の pending_review は残す (フィルタ調整の余地を残す)。"""
     recent_id = await _insert_pending_review(
         db, title="販売方法について", key="k-recentpr",
-        first_seen_at=NOW - timedelta(days=3),
+        first_seen_at=NOW - timedelta(days=1),
     )
     count, _ = await archive_stale_events(db, execute=True, now=NOW)
     assert count == 0

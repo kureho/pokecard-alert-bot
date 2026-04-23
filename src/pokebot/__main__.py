@@ -631,7 +631,10 @@ async def archive_stale_events(
     """
     _now = now if now is not None else datetime.now()
     apply_end_cutoff = _now - timedelta(hours=1)
-    pending_review_cutoff = _now - timedelta(days=7)
+    # pending_review cutoff: 3日で archive。既存ゴミ (2週間前の store_voice 販売方法記事等)
+    # を掃除する用途。新規 insert は df91dfb のフィルタで発生しない設計なので、
+    # cutoff は短めで積極的に archive して良い。
+    pending_review_cutoff = _now - timedelta(days=3)
 
     allowed = await _compute_tokyo_metro_allowed_store_names()
     non_tokyo_retailers = set(allowed.keys())
