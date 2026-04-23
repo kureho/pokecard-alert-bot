@@ -12,6 +12,9 @@ from .storage.repos import SourceRepo
 # - biccamera_lottery / pokecawatch_chusen: empty response
 # - pokemoncenter_online_guide: adapter が Candidate を 1 件も返さない health 専用。
 #   2026-04-22 から 403 が発生し silence 警告のみ無駄に発火するため無効化。
+# - twitter_* (7 アカウント): 2026-04-23 現在、pacing 10s でも syndication.twitter.com が
+#   全アカウントに対し 429 を返し続けている (IP ベースの rate limit と推定)。
+#   公式 Twitter API (v2) へ移行するまで一時無効化。
 DISABLED_SOURCES: frozenset[str] = frozenset(
     {
         "yodobashi_lottery",
@@ -20,6 +23,13 @@ DISABLED_SOURCES: frozenset[str] = frozenset(
         "pokecawatch_chusen",
         "amazon_search",
         "pokemoncenter_online_guide",
+        "twitter_pokecayoyaku",
+        "twitter_pokecamatomeru",
+        "twitter_pokecawatch",
+        "twitter_beatdown",
+        "twitter_ys_info",
+        "twitter_usagiya_jounai",
+        "twitter_t_sanoTCG",
     }
 )
 

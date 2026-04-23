@@ -33,24 +33,19 @@ log = logging.getLogger("pokebot")
 
 # 各 Job に含める adapter (sources テーブル側の source_name と一致)
 PRODUCT_SYNC_ADAPTERS = ["pokemon_official_products"]
-# 2026-04-22: 以下の adapter は長期間失敗中のため LOTTERY_WATCH から除外。
+# 2026-04-22〜23: 以下の adapter は長期間失敗中のため LOTTERY_WATCH から除外。
 # seeds.py の DISABLED_SOURCES でも is_active=False にして silence warning も止める。
 # - yodobashi_lottery / amiami_lottery: GHA US IP で 403 Forbidden
 # - amazon_search: Bot 検知で 503
 # - biccamera_lottery / pokecawatch_chusen: empty response (構造変更 or block)
+# - pokemoncenter_online_guide: health check 専用で candidate を返さない設計。403 でノイズのみ
+# - twitter_* (7 件): pacing 10s でも全 429。公式 API v2 へ移行するまで休止
 # 復旧時は seeds.DISABLED_SOURCES と下記リストから戻す。
 LOTTERY_WATCH_ADAPTERS = [
     "pokemon_official_news",
     "pokemoncenter_online_lottery",
     "pokemoncenter_store_voice",
     "c_labo_blog",
-    "twitter_pokecayoyaku",
-    "twitter_pokecamatomeru",
-    "twitter_pokecawatch",
-    "twitter_beatdown",
-    "twitter_ys_info",
-    "twitter_usagiya_jounai",
-    "twitter_t_sanoTCG",
     "nyuka_now_news",
     "rakuten_books_entry",
     "yamada_lottery",
