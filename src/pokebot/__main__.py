@@ -52,6 +52,10 @@ LOTTERY_WATCH_ADAPTERS = [
     "yamada_lottery",
     "hbst_lottery",
     "amiami_lottery",
+    # 人間集約まとめブログ。1 記事で数百店舗分の抽選情報を取り込む。
+    # evidence_type=aggregator (trust=80) で confirmed_medium 止まり、
+    # 他 adapter とクロスした時に strong 昇格する設計。
+    "rare_zaiko_aggregator",
 ]
 
 # Fast lane: 公式 + 主要販路の entry_page/store_notice 系だけを短周期で回す。

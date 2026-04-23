@@ -34,6 +34,8 @@ _EVIDENCE_BASE = {
     "official_notice": 60,  # 公式ニュース・告知
     "store_notice": 55,     # 店舗ブログ・告知
     "faq_or_guide": 50,     # FAQ / ガイド
+    "aggregator": 50,       # 人間が集約したまとめブログ (rare-zaiko 等)。
+                            # 単独で confirmed_medium 止まり、cross_source で strong に昇格する想定。
     "search_result": 20,    # 検索結果のみ
     "rss_item": 15,         # RSS タイトルのみ
     "social_post": 10,      # Twitter など
@@ -136,6 +138,7 @@ _EVIDENCE_LABEL = {
     "official_notice": "公式告知",
     "store_notice": "店舗告知",
     "faq_or_guide": "FAQ/ガイド",
+    "aggregator": "集約まとめ",
     "search_result": "検索結果",
     "rss_item": "RSS",
     "social_post": "SNS",

@@ -183,6 +183,17 @@ SEED_SOURCES: list[tuple[str, str, str, int]] = [
         "https://news.google.com/rss/search",
         85,
     ),
+    # rare-zaiko.blog.jp: 1 商品につき全国 600 店舗分の抽選情報を人間が集約した記事を
+    # 掲載するブログ。RSS 経由で最新まとめ記事を検知 → table#myTable をパースして各行を
+    # Candidate 化。都道府県 allowlist (オンライン/全国/東京 1都3県) で絞る。
+    # 2 次集約情報なので trust_score=80、evidence_type=aggregator で confirmed_medium 止まり
+    # → 他 adapter とクロスした時に confirmed_strong 昇格する設計。
+    (
+        "rare_zaiko_aggregator",
+        "aggregator",
+        "https://rare-zaiko.blog.jp/index.rdf",
+        80,
+    ),
 ]
 
 
