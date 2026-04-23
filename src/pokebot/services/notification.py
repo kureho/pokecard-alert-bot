@@ -287,7 +287,16 @@ class NotificationDispatcher:
 
         # DRY_RUN: notifications テーブルに触れず、would-send ログのみ出す。
         # これにより本番 run 時に過去の DRY_RUN 予約が suppress 原因にならない。
+        # ただし本番で try_claim が衝突する条件 (同じ dedupe_key が既存) は事前に READ で判定し、
+        # would-suppressed として扱う (dry-run の予測精度を上げるため)。
         if isinstance(self._notifier, DryRunNotifier):
+            if await self._notif.is_dedupe_claimed(ndk):
+                log.info(
+                    "[DRY_RUN] would-suppressed event=%s type=%s (dedupe claimed)",
+                    event.id, notification_type,
+                )
+                result.suppressed += 1
+                return
             try:
                 await self._notifier.send(summary)
                 if notification_type == "new":
@@ -541,6 +550,13 @@ class NotificationDispatcher:
         ]).strip()
 
         if isinstance(self._notifier, DryRunNotifier):
+            if await self._notif.is_dedupe_claimed(ndk):
+                log.info(
+                    "[DRY_RUN] would-suppressed event=%s type=deadline (dedupe claimed)",
+                    event.id,
+                )
+                result.suppressed += 1
+                return
             try:
                 await self._notifier.send(summary)
                 result.update_sent += 1

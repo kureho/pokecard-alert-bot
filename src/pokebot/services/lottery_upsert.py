@@ -265,6 +265,7 @@ class LotteryEventUpsertService:
                 retailer_event_id=candidate.retailer_event_id,
                 confidence_level=level.value,
                 content_dedupe_key=content_key,
+                now=now,
             )
             if source_id:
                 await self._lottery_repo.add_source_link(
@@ -286,16 +287,22 @@ class LotteryEventUpsertService:
             if new_v is not None and new_v != old_v:
                 updates[f] = new_v
 
-        # confidence 系は毎回最新化。evidence_score は新しい方が強ければ採用。
-        new_conf_score = max(existing.confidence_score, evidence_score)
-        updates["confidence_score"] = new_conf_score
-        updates["official_confirmation_status"] = legacy_status
+        # confidence 系は値が変化した時だけ updates に入れる。無条件で入れると
+        # 内容不変の再観測でも updated_at が bump され、dispatch_updates が無駄に走る。
+        new_conf_score = max(existing.confidence_score or 0, evidence_score)
+        if new_conf_score != (existing.confidence_score or 0):
+            updates["confidence_score"] = new_conf_score
+        if legacy_status != existing.official_confirmation_status:
+            updates["official_confirmation_status"] = legacy_status
         # 既存の confidence_level を弱くする方向の上書きはしない。
-        # NULL (既存 event) or 同等以下 → 新 level を採用。
+        # NULL (既存 event) or 同等以下 → 新 level を採用、ただし値が変わる場合だけ。
         if existing.confidence_level is None or evidence_score >= (existing.evidence_score or 0):
-            updates["confidence_level"] = level.value
-            updates["evidence_score"] = evidence_score
-            updates["evidence_summary"] = evidence_summary
+            if level.value != existing.confidence_level:
+                updates["confidence_level"] = level.value
+            if evidence_score != (existing.evidence_score or 0):
+                updates["evidence_score"] = evidence_score
+            if evidence_summary != (existing.evidence_summary or None):
+                updates["evidence_summary"] = evidence_summary
         # 非破壊 enrichment: 既存 NULL 時のみ埋める。
         if existing.application_url is None and candidate.application_url:
             updates["application_url"] = candidate.application_url
@@ -333,7 +340,7 @@ class LotteryEventUpsertService:
         meaningful_changes = any(k in self.SIGNIFICANT_FIELDS for k in updates.keys())
 
         if updates:
-            await self._lottery_repo.update(existing.id, **updates)
+            await self._lottery_repo.update(existing.id, now=now, **updates)
         else:
             await self._lottery_repo.touch_last_seen(existing.id, now)
 

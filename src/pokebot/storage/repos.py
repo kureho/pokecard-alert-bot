@@ -278,7 +278,13 @@ class LotteryEventRepo:
         confidence_score, dedupe_key, status, product_name_normalized,
         application_url, product_url, entry_method, sale_status, page_fingerprint,
         evidence_score, evidence_summary, retailer_event_id, confidence_level,
-        content_dedupe_key."""
+        content_dedupe_key.
+
+        Optional: now (datetime) - first_seen_at / last_seen_at / updated_at に使う。
+        渡さなければ DB の CURRENT_TIMESTAMP (サーバ TZ) にフォールバックする。
+        JST naive な now を渡すことで、Python 側の datetime.now() との比較を TZ 整合させる。
+        """
+        now = fields.get("now")
         async with self._db.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """INSERT INTO lottery_events (
@@ -289,9 +295,13 @@ class LotteryEventRepo:
                     product_name_normalized,
                     application_url, product_url, entry_method, sale_status,
                     page_fingerprint, evidence_score, evidence_summary,
-                    retailer_event_id, confidence_level, content_dedupe_key
+                    retailer_event_id, confidence_level, content_dedupe_key,
+                    first_seen_at, last_seen_at, updated_at
                 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
-                          $19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+                          $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,
+                          COALESCE($29, CURRENT_TIMESTAMP),
+                          COALESCE($29, CURRENT_TIMESTAMP),
+                          COALESCE($29, CURRENT_TIMESTAMP))
                 RETURNING id""",
                 fields.get("product_id"), fields["retailer_name"], fields.get("store_name"),
                 fields["canonical_title"], fields["sales_type"],
@@ -314,21 +324,30 @@ class LotteryEventRepo:
                 fields.get("retailer_event_id"),
                 fields.get("confidence_level"),
                 fields.get("content_dedupe_key"),
+                now,
             )
         return row["id"]
 
-    async def update(self, event_id: int, **fields: Any) -> None:
-        """Update selected fields and bump updated_at + last_seen_at."""
+    async def update(
+        self, event_id: int, *, now: datetime | None = None, **fields: Any
+    ) -> None:
+        """Update selected fields and bump updated_at + last_seen_at.
+
+        now を渡すと last_seen_at / updated_at に JST naive 値を使う (TZ 整合)。
+        """
         if not fields:
             return
         cols = list(fields.keys())
         placeholders = ", ".join(f"{c} = ${i+2}" for i, c in enumerate(cols))
+        ts_expr = f"${len(cols) + 2}" if now is not None else "CURRENT_TIMESTAMP"
         query = (
             f"UPDATE lottery_events SET {placeholders}, "
-            f"last_seen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
+            f"last_seen_at = {ts_expr}, updated_at = {ts_expr} "
             f"WHERE id = $1"
         )
-        values = [fields[c] for c in cols]
+        values: list[Any] = [fields[c] for c in cols]
+        if now is not None:
+            values.append(now)
         async with self._db.pool.acquire() as conn:
             await conn.execute(query, event_id, *values)
 
@@ -611,6 +630,19 @@ class NotificationRepo:
                 lottery_event_id, notification_type,
             )
         return row["last_sent"] if row and row["last_sent"] else None
+
+    async def is_dedupe_claimed(self, dedupe_key: str) -> bool:
+        """指定 dedupe_key の notification 行が既に存在するか (sent 済みか否かを問わない)。
+
+        dry-run で、本番なら try_claim が None を返す条件を事前に判定するための READ-ONLY 版。
+        try_claim の ON CONFLICT (dedupe_key) と同じ観点で衝突判定する。
+        """
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT 1 FROM notifications WHERE dedupe_key = $1 LIMIT 1",
+                dedupe_key,
+            )
+        return row is not None
 
     async def has_sent_with_summary(
         self, *, lottery_event_id: int, summary: str

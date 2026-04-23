@@ -905,3 +905,70 @@ async def test_dispatch_deadlines_suppressed_during_quiet_hours(db):
     assert result.update_sent == 0
     # deadline 通知は送られていない (LINE は new 1 件のまま)
     assert len(notifier.sent) == 1
+
+
+# ===== dry-run dedupe check =====
+
+
+@pytest.mark.asyncio
+async def test_dry_run_suppresses_already_sent_new(db):
+    """既に本番で new 送信済みの event は dry-run で would-suppressed になる。
+
+    従来は dry-run が try_claim を skip するため、sent 済み event も would-send と
+    表示され dry-run の予測精度が悪かった。同じ dedupe_key の notification が
+    存在するなら suppressed として扱う。
+    """
+    from pokebot.notify.line import DryRunNotifier
+    await _create_confirmed_event(db)
+
+    # 1回目: 本番 Notifier で送信し notifications に claim 済み状態を作る
+    live_notifier = FakeNotifier()
+    live_disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=live_notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    r1 = await live_disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
+    assert r1.new_sent == 1
+
+    # 2回目: DryRunNotifier で走らせる → 既に claim 済みなので suppressed
+    # fresh_window を広げて event が候補に残るようにする (PRODUCT_NEW_COOLDOWN=72h をまたぐため)
+    dry = DryRunNotifier()
+    dry_disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=dry,
+        max_per_run=10,
+        max_per_day=150,
+        fresh_window=timedelta(days=10),
+    )
+    r2 = await dry_disp.dispatch(now=datetime(2026, 4, 25, 12, 5))
+    assert r2.new_sent == 0
+    assert r2.suppressed == 1
+    # dry-run Notifier には書き込みされていない
+    assert dry.sent == []
+
+
+@pytest.mark.asyncio
+async def test_dry_run_sends_when_not_claimed(db):
+    """dedupe が衝突しない event は dry-run で通常通り would-send する。"""
+    from pokebot.notify.line import DryRunNotifier
+    await _create_confirmed_event(db)
+
+    dry = DryRunNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=dry,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    result = await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
+    assert result.new_sent == 1
+    assert result.suppressed == 0
+    assert len(dry.sent) == 1

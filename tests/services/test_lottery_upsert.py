@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -366,3 +366,78 @@ async def test_upsert_default_evidence_type_unknown_is_low(db):
     out = await svc.apply(c, now=now)
     ev = await LotteryEventRepo(db).find_by_dedupe_key(out.dedupe_key)
     assert ev.confidence_level == "candidate"
+
+
+@pytest.mark.asyncio
+async def test_unchanged_reobservation_does_not_bump_updated_at(db):
+    """confidence/status が同値の再観測では updated_at を bump しない (last_seen_at だけ更新)。
+
+    以前は confidence_score / official_confirmation_status を無条件で updates dict に入れていたため、
+    内容不変の lottery_watch で updated_at が毎回 bump され、dispatch_updates が
+    全 active event をピックアップしていた (通知は has_sent_with_summary で抑止するので
+    実害はないが、DB クエリが無駄)。
+    """
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    out = await svc.apply(_cand(), now=now)
+
+    async def _read_times(event_id: int) -> tuple[datetime, datetime]:
+        async with db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT updated_at, last_seen_at FROM lottery_events WHERE id = $1",
+                event_id,
+            )
+        return row["updated_at"], row["last_seen_at"]
+
+    updated_at_1, _ = await _read_times(out.event_id)
+
+    # 再観測 (content 不変) を十分な時間差で行う。
+    # pytest の実行速度で同一 CURRENT_TIMESTAMP 内に収まるのを避けるため asyncio.sleep も挟む
+    import asyncio
+    await asyncio.sleep(0.05)
+    later = now + timedelta(minutes=30)
+    await svc.apply(_cand(), now=later)
+    updated_at_2, _ = await _read_times(out.event_id)
+
+    assert updated_at_2 == updated_at_1, "内容不変なのに updated_at が bump された"
+
+
+@pytest.mark.asyncio
+async def test_create_uses_passed_now_for_first_seen_at(db):
+    """create() 時に now を渡すと first_seen_at / last_seen_at / updated_at が揃う (TZ 整合)。
+
+    以前は DB CURRENT_TIMESTAMP (UTC) と Python datetime.now() (JST) が 9h ずれ、
+    list_active_since(since=now-3days) で境界付近の event が取り漏れる問題があった。
+    """
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    out = await svc.apply(_cand(), now=now)
+
+    async with db.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT first_seen_at, last_seen_at, updated_at FROM lottery_events WHERE id = $1",
+            out.event_id,
+        )
+    assert row["first_seen_at"] == now
+    assert row["last_seen_at"] == now
+    assert row["updated_at"] == now
+
+
+@pytest.mark.asyncio
+async def test_update_uses_passed_now_for_timestamps(db):
+    """update() 時も now を渡すと last_seen_at / updated_at に反映される。"""
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    out = await svc.apply(_cand(), now=now)
+
+    # SIGNIFICANT_FIELDS のどれかを変えて updates を発生させる
+    later = datetime(2026, 4, 22, 10, 30)
+    await svc.apply(_cand(purchase_limit_text="1人1点"), now=later)
+
+    async with db.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT last_seen_at, updated_at FROM lottery_events WHERE id = $1",
+            out.event_id,
+        )
+    assert row["last_seen_at"] == later
+    assert row["updated_at"] == later

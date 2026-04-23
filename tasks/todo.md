@@ -33,20 +33,18 @@ pokemoncenter_online_guide / twitter_× 7
 
 ### 🟡 優先度中 (後日)
 
-- [ ] **DryRunNotifier に dedupe check 追加**
-  - 現状: dry-run で try_claim を skip するため、既に dedupe 済みの event が "would-send" と表示される
-  - 影響: dry-run の予測精度が悪い (2026-04-22 の浜松対応で混乱した)
-  - 対策: dry-run 時も dedupe_key を SELECT で確認し、衝突なら would-suppressed と表示
+- [x] **DryRunNotifier に dedupe check 追加** (2026-04-23 実装済)
+  - `NotificationRepo.is_dedupe_claimed()` 追加 (READ-only)
+  - dispatch_for_event / _dispatch_deadline_for_event の dry-run 分岐で ndk 衝突時は `result.suppressed += 1`
+  - ログに `[DRY_RUN] would-suppressed event=... (dedupe claimed)` 出力
 
-- [ ] **updated_at 無条件 bump 修正**
-  - 現状: `lottery_upsert.apply` で confidence_score / official_confirmation_status を無条件で updates dict に入れるため、update() SQL が毎 run 走り updated_at bump
-  - 影響: dispatch_updates が全 active event をピックアップ (DB クエリ無駄)。通知は has_sent_with_summary で suppress するので実害小
-  - 対策: 値が実際に変わった時だけ updates に入れる (`>=` → `>` or `!=` 比較)
+- [x] **updated_at 無条件 bump 修正** (2026-04-23 実装済)
+  - `lottery_upsert.apply` で confidence_score / official_confirmation_status / confidence_level / evidence_score / evidence_summary を「値が変化した時だけ」updates に入れる
+  - 内容不変の再観測は touch_last_seen 経由 (updated_at bump なし、last_seen_at のみ更新)
 
-- [ ] **TZ 混在 (first_seen_at UTC vs now JST) 修正**
-  - 現状: `lottery_events.first_seen_at` は `DEFAULT CURRENT_TIMESTAMP` (DB サーバ TZ = UTC)、`now = datetime.now()` は JST naive
-  - 影響: `dispatch.list_active_since(since=now-3days)` の比較で 9h オフセット。fresh_window 境界で 9h 分の誤差
-  - 対策: `lottery_repo.create()` で `first_seen_at=$N` を明示的に渡す、または DB TZ を Asia/Tokyo に設定
+- [x] **TZ 混在 (first_seen_at UTC vs now JST) 修正** (2026-04-23 実装済)
+  - `LotteryEventRepo.create()` / `update()` に optional `now` パラメータを追加。COALESCE で渡された now 優先、未指定時は CURRENT_TIMESTAMP にフォールバック
+  - `lottery_upsert.apply` で now を両方に渡し、DB タイムスタンプ 3 種 (first_seen_at / last_seen_at / updated_at) を JST naive で揃える
 
 ### 🔵 優先度低 (nice to have)
 
