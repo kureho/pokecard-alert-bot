@@ -52,7 +52,6 @@ LOTTERY_WATCH_ADAPTERS = [
     "yamada_lottery",
     "hbst_lottery",
     "amiami_lottery",
-    "google_news_rss",
 ]
 
 # Fast lane: 公式 + 主要販路の entry_page/store_notice 系だけを短周期で回す。

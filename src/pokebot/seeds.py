@@ -24,6 +24,11 @@ DISABLED_SOURCES: frozenset[str] = frozenset(
         # amazon の /s 検索 API は proxy 経由でも 503 (Bot 対策が商品検索に厳しい)。
         # トップ / 商品詳細なら取れるので、将来的に特定 ASIN を monitor する形に作り直す余地あり。
         "amazon_search",
+        # Google News RSS の `rss/articles/<id>` は JS redirect 設計で、直接 GET すると
+        # 400 で実 URL に辿り着けない (2026 現在の Google の Bot 対策)。source.href は
+        # domain のみで個別記事 URL を含まないため本文 fetch 不可。Playwright 等で JS
+        # 解決できる環境が用意できるまで保留。コードは将来再有効化を想定して残す。
+        "google_news_rss",
         "pokecawatch_chusen",
         "pokemoncenter_online_guide",
         # 2026-04-23: まとめ記事系で一次情報ではない。audit 結果 events=8 で全 archived、
