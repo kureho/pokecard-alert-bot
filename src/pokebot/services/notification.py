@@ -172,7 +172,6 @@ class NotificationDispatcher:
         max_per_day: int = DEFAULT_MAX_PER_DAY,
         fresh_window: timedelta = DEFAULT_FRESH_WINDOW,
         deadline_window: timedelta = DEFAULT_DEADLINE_WINDOW,
-        secondary_notifier: Notifier | None = None,
     ) -> None:
         self._lottery = lottery_repo
         self._product = product_repo
@@ -182,11 +181,6 @@ class NotificationDispatcher:
         self._max_per_day = max_per_day
         self._fresh_window = fresh_window
         self._deadline_window = deadline_window
-        # secondary_notifier: LINE sidecar としての Discord 等。primary の dedupe / cap /
-        # quiet hours をそのまま継承する (primary が送るものだけ並行送信)。
-        # LINE が suppress / quiet / skip する event は secondary も送らない。
-        # fire-and-forget: secondary 失敗で primary に影響しない。
-        self._secondary = secondary_notifier
 
     async def dispatch_for_event(
         self,
@@ -311,7 +305,6 @@ class NotificationDispatcher:
                     result.update_sent += 1
             except Exception as e:  # noqa: BLE001
                 log.warning("dry_run send failed for event %s: %s", event.id, e)
-            # DRY_RUN でも secondary は実送信しない (would-send ログを汚さないため)
             return
 
         claim_id = await self._notif.try_claim(
@@ -346,20 +339,6 @@ class NotificationDispatcher:
             result.new_sent += 1
         elif notification_type == "update":
             result.update_sent += 1
-        await self._fire_secondary(summary, event_id=event.id)
-
-    async def _fire_secondary(self, summary: str, *, event_id: int) -> None:
-        """secondary (Discord 等) へ並行送信。primary 成功時のみ呼ばれる。
-
-        fire-and-forget: 失敗しても primary の結果に影響しない。
-        DryRunNotifier が primary の場合はここに来ない (dispatch 側で return 済み)。
-        """
-        if self._secondary is None:
-            return
-        try:
-            await self._secondary.send(summary)
-        except Exception as e:  # noqa: BLE001
-            log.warning("secondary notifier send failed for event %s: %s", event_id, e)
 
     async def _count_sent_today(self, now: datetime) -> int:
         """per-day cap カウント。seed/silence/daily_summary 等 LINE 内部管理用通知は除外。
@@ -611,4 +590,3 @@ class NotificationDispatcher:
             return
         await self._notif.mark_sent(claim_id, now)
         result.update_sent += 1
-        await self._fire_secondary(summary, event_id=event.id)

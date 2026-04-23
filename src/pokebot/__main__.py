@@ -12,7 +12,6 @@ from . import adapters  # noqa: F401  # side-effect: all adapters register
 from .adapters.registry import AdapterRegistry
 from .lib.dedupe import build_notification_dedupe_key
 from .logging_setup import setup_logging
-from .notify.discord import DiscordWebhookNotifier
 from .notify.line import DryRunNotifier, LineNotifier, Notifier
 from .seeds import seed_sources
 from .services.lottery_upsert import LotteryEventUpsertService
@@ -88,20 +87,6 @@ def _make_notifier() -> Notifier:
         token=os.environ["LINE_CHANNEL_ACCESS_TOKEN"],
         user_id=os.environ["LINE_USER_ID"],
     )
-
-
-def _make_secondary_notifier() -> Notifier | None:
-    """DISCORD_WEBHOOK_URL が設定されていれば Discord sidecar を返す。未設定なら None。
-
-    DRY_RUN 時は secondary も無効化する (dispatcher 側で fire しないが、念のため)。
-    """
-    if _is_dry_run():
-        return None
-    url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
-    if not url:
-        return None
-    log.info("discord secondary notifier enabled")
-    return DiscordWebhookNotifier(webhook_url=url)
 
 
 async def _run_adapter(source_name: str, source_repo: SourceRepo, now: datetime) -> list:
@@ -256,7 +241,6 @@ async def job_notify_dispatch() -> None:
             notifier=notifier,
             max_per_run=_env_int("MAX_NOTIFY_PER_RUN", DEFAULT_MAX_PER_RUN),
             max_per_day=_env_int("MAX_NOTIFY_PER_DAY", DEFAULT_MAX_PER_DAY),
-            secondary_notifier=_make_secondary_notifier(),
         )
         now = datetime.now()
         result = await disp.dispatch(now=now)
