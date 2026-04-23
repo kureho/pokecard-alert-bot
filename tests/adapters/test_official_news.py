@@ -55,3 +55,58 @@ async def test_body_info_applies_when_available():
 @pytest.mark.asyncio
 async def test_official_news_adapter_name():
     assert PokemonOfficialNewsAdapter().source_name == "pokemon_official_news"
+
+
+@pytest.mark.asyncio
+async def test_sales_type_unknown_is_skipped():
+    """title と body 両方で sales_type が判別不能 → candidate を発行しない。
+
+    「新商品発売のお知らせ」「○○イベント」のような抽選/先着ではない記事を弾く。
+    """
+    # 発売告知だけの記事タイトル (リスト項目 1 件のみ含む最小HTML)
+    html = (
+        '<html><body><ul class="List">'
+        '<li class="List_item">'
+        '<a class="List_item_inner" href="/info/event/12345.html">'
+        '<div class="List_title"><img alt="新商品「ポケモンフレンダ」発売のお知らせ"/></div>'
+        '<div class="List_body"><span class="Date">2026.04.20</span></div>'
+        '</a></li></ul></body></html>'
+    )
+
+    async def _fake_fetcher(url):
+        # body にも 抽選/先着/整理券/招待 キーワードなし
+        return "<html><body><p>新商品の詳細をお知らせします。発売日: 5月22日。</p></body></html>"
+
+    adapter = PokemonOfficialNewsAdapter(
+        html=html, body_fetcher=_fake_fetcher, max_body_fetch=20
+    )
+    candidates = await adapter.run()
+    # sales_type 判別不能記事は取らない
+    assert candidates == []
+
+
+@pytest.mark.asyncio
+async def test_sales_type_inferred_from_body_when_title_ambiguous():
+    """title は販売方式不明でも、body に「抽選」があれば sales_type=lottery で発行。"""
+    html = (
+        '<html><body><ul class="List">'
+        '<li class="List_item">'
+        '<a class="List_item_inner" href="/info/sales/12346.html">'
+        '<div class="List_title"><img alt="アビスアイの販売方法について"/></div>'
+        '<div class="List_body"><span class="Date">2026.04.22</span></div>'
+        '</a></li></ul></body></html>'
+    )
+
+    async def _fake_fetcher(url):
+        return (
+            "<html><body>"
+            "<p>抽選販売を実施します。応募期間: 5月10日 14:00 〜 5月14日 23:59</p>"
+            "</body></html>"
+        )
+
+    adapter = PokemonOfficialNewsAdapter(
+        html=html, body_fetcher=_fake_fetcher, max_body_fetch=20
+    )
+    candidates = await adapter.run()
+    assert len(candidates) == 1
+    assert candidates[0].sales_type == "lottery"

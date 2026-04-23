@@ -14,12 +14,15 @@ from datetime import datetime, timedelta
 from ..lib.dedupe import build_notification_dedupe_key
 from ..lib.quiet_hours import is_quiet_hours
 from ..notify.line import Notifier
+from ..seeds import DISABLED_SOURCES
 from ..storage.db import Database
 from ..storage.repos import NotificationRepo
 
 log = logging.getLogger(__name__)
 
-FAILURE_ALERT_THRESHOLD = 5  # 連続失敗回数
+# 連続失敗回数閾値。5 だと flaky source (一時的 429 等) でも警告が飛んでノイズになるため、
+# 10 連続失敗 = 約 5 時間 (30分 cron × 10) で「継続的に壊れている」を判定。
+FAILURE_ALERT_THRESHOLD = 10
 SILENCE_WARNING_HOURS = 48  # 最終成功からの閾値
 WARN_DEBOUNCE_HOURS = 24  # 同一ソース警告の debounce
 
@@ -41,6 +44,10 @@ async def _collect_warnings(db: Database, now: datetime) -> list[SilenceWarning]
         )
     for r in rows:
         source = r["source_name"]
+        # seed の反映遅延対策: DISABLED_SOURCES に載っている source は is_active=TRUE のまま
+        # DB に残っていても warning 対象から除外する (次回 seed_sources 実行で is_active=False に倒される)。
+        if source in DISABLED_SOURCES:
+            continue
         fails = r["consecutive_failures"]
         last_success = r["last_success_at"]
         last_attempt = r["last_attempt_at"]

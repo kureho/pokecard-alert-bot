@@ -114,6 +114,18 @@ class PokecenStoreVoiceAdapter(SourceAdapter):
                     if body_info is None or not body_info.has_any_date:
                         continue
 
+                # sales_type 確定: title 由来を基本に、title が unknown の場合は body から推定。
+                # これにより「販売方法について」(SALES_METHOD) で title 判別不能だった記事も、
+                # 本文に「抽選」「先着」等があれば正しく sales_type を決められる。
+                sales_type = analysis.inferred_sales_type
+                if sales_type == "unknown" and body_info:
+                    sales_type = body_info.inferred_sales_type
+
+                # title も body も sales_type 判別不能なら DB に入れない (ノイズ排除)。
+                # pending_review で溜まり続けて通知に繋がらない event を生成しない。
+                if sales_type == "unknown":
+                    continue
+
                 # 商品名: body の h1/title を優先 (タイトル【】等ノイズ除去のため)
                 if body_info and body_info.product_name:
                     product_name_raw = clean_text(body_info.product_name)
@@ -138,7 +150,7 @@ class PokecenStoreVoiceAdapter(SourceAdapter):
                     product_name_normalized=product_name_normalized,
                     retailer_name="pokemoncenter",
                     store_name=store_label,
-                    sales_type=analysis.inferred_sales_type,
+                    sales_type=sales_type,
                     canonical_title=title,
                     apply_start_at=apply_start,
                     apply_end_at=apply_end,

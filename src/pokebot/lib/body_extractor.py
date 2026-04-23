@@ -37,6 +37,29 @@ _CONDITION_LABELS = [
 ]
 
 
+def _infer_sales_type_from_body(text: str) -> str:
+    """本文テキストから sales_type を推定。優先順は上から下。
+
+    title 由来で SALES_METHOD (販売方法について) と分類された記事では、title から
+    抽選/先着を判断できないため、本文で最終判定する。
+    """
+    # 招待: Amazon 等の「招待リクエスト」型。他より特殊なので先に判定。
+    if "招待" in text and "リクエスト" in text:
+        return "invitation"
+    # 抽選系 (先着より優先): 本文メインが抽選で落選者に先着がおまけ、のパターンを考慮
+    if "抽選" in text and ("応募" in text or "受付" in text or "販売" in text):
+        if "予約" in text:
+            return "preorder_lottery"
+        return "lottery"
+    # 整理券
+    if "整理券" in text or "番号札" in text:
+        return "numbered_ticket"
+    # 先着
+    if "先着" in text:
+        return "first_come"
+    return "unknown"
+
+
 @dataclass
 class ExtractedBody:
     apply_start_at: datetime | None = None
@@ -48,6 +71,9 @@ class ExtractedBody:
     conditions_text: str | None = None
     body_text: str = ""
     product_name: str | None = None
+    # 本文から推定した販売方式。title 由来の unknown を上書きできる。
+    # 値: lottery / preorder_lottery / first_come / numbered_ticket / invitation / unknown
+    inferred_sales_type: str = "unknown"
 
     @property
     def has_any_date(self) -> bool:
@@ -155,5 +181,7 @@ def extract_body_info(html: str) -> ExtractedBody:
             if result.conditions_text is None:
                 result.conditions_text = snippet
             break
+
+    result.inferred_sales_type = _infer_sales_type_from_body(text)
 
     return result

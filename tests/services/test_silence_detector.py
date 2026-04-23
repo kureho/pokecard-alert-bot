@@ -24,7 +24,8 @@ async def test_warns_on_consecutive_failures(db):
         trust_score=90,
     )
     now = datetime(2026, 4, 21, 12)
-    for i in range(6):
+    # FAILURE_ALERT_THRESHOLD=10 なので 11 回連続失敗させる
+    for i in range(11):
         await srepo.record_failure(sid, now - timedelta(minutes=i), "boom")
     det = SilenceDetector(
         db=db,
@@ -45,7 +46,8 @@ async def test_debounces_within_24h(db):
         trust_score=90,
     )
     now = datetime(2026, 4, 21, 12)
-    for i in range(6):
+    # FAILURE_ALERT_THRESHOLD=10 なので 11 回連続失敗させる
+    for i in range(11):
         await srepo.record_failure(sid, now - timedelta(minutes=i), "boom")
     det = SilenceDetector(
         db=db,
@@ -89,7 +91,7 @@ async def test_suppressed_during_quiet_hours(db):
         trust_score=90,
     )
     night = datetime(2026, 4, 21, 23, 0)  # 抑止帯
-    for i in range(6):
+    for i in range(11):
         await srepo.record_failure(sid, night - timedelta(minutes=i), "boom")
     det = SilenceDetector(
         db=db,
@@ -98,6 +100,32 @@ async def test_suppressed_during_quiet_hours(db):
     )
     sent = await det.tick(now=night)
     assert sent == 0
+
+
+@pytest.mark.asyncio
+async def test_disabled_source_is_excluded_from_warnings(db):
+    """DISABLED_SOURCES に載っている source は、DB の is_active=TRUE でも警告対象にしない。
+
+    seeds 反映タイミングのラグで is_active が残っていても、コード側で除外される。
+    """
+    srepo = SourceRepo(db)
+    sid = await srepo.upsert(
+        # DISABLED_SOURCES に含まれる既知の adapter 名を使う
+        source_name="twitter_pokecayoyaku",
+        source_type="social",
+        base_url="https://twitter.com/x",
+        trust_score=80,
+    )
+    now = datetime(2026, 4, 21, 12)
+    for i in range(15):
+        await srepo.record_failure(sid, now - timedelta(minutes=i), "429")
+    det = SilenceDetector(
+        db=db,
+        notification_repo=NotificationRepo(db),
+        notifier=FakeNotifier(),
+    )
+    sent = await det.tick(now=now)
+    assert sent == 0, "DISABLED_SOURCES の source は警告を出さない"
 
 
 @pytest.mark.asyncio
@@ -111,7 +139,8 @@ async def test_warns_after_debounce_window(db):
         trust_score=90,
     )
     now = datetime(2026, 4, 21, 12)
-    for i in range(6):
+    # FAILURE_ALERT_THRESHOLD=10 なので 11 回連続失敗させる
+    for i in range(11):
         await srepo.record_failure(sid, now - timedelta(minutes=i), "boom")
     det = SilenceDetector(
         db=db,

@@ -46,7 +46,6 @@ LOTTERY_WATCH_ADAPTERS = [
     "pokemoncenter_online_lottery",
     "pokemoncenter_store_voice",
     "c_labo_blog",
-    "nyuka_now_news",
     "rakuten_books_entry",
     "yamada_lottery",
     "hbst_lottery",

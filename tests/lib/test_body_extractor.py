@@ -54,3 +54,55 @@ def test_product_name_none_if_neither():
     html = """<html><body><p>title も h1 も無いページ</p></body></html>"""
     r = extract_body_info(html)
     assert r.product_name is None
+
+
+# ===== inferred_sales_type: 本文から販売方式を推定 =====
+
+
+def test_inferred_sales_type_lottery():
+    """本文に「抽選」「応募」がある → lottery。"""
+    html = "<p>抽選販売を実施します。応募期間: 5月10日〜5月14日</p>"
+    r = extract_body_info(html)
+    assert r.inferred_sales_type == "lottery"
+
+
+def test_inferred_sales_type_preorder_lottery():
+    """本文に「予約」+「抽選」 → preorder_lottery。"""
+    html = "<p>発売前の予約抽選販売を受付中です。応募期間: 5月10日〜5月14日</p>"
+    r = extract_body_info(html)
+    assert r.inferred_sales_type == "preorder_lottery"
+
+
+def test_inferred_sales_type_first_come():
+    """本文に「先着」→ first_come。"""
+    html = "<p>先着順の販売となります。5月22日14:00より受付開始。</p>"
+    r = extract_body_info(html)
+    assert r.inferred_sales_type == "first_come"
+
+
+def test_inferred_sales_type_numbered_ticket():
+    """本文に「整理券」→ numbered_ticket。"""
+    html = "<p>整理券配布による販売を行います。当日10:00より配布。</p>"
+    r = extract_body_info(html)
+    assert r.inferred_sales_type == "numbered_ticket"
+
+
+def test_inferred_sales_type_invitation():
+    """本文に「招待」→ invitation (Amazon 等の招待リクエスト型)。"""
+    html = "<p>商品は招待リクエスト制のため、招待を受けた方のみ購入可能です。</p>"
+    r = extract_body_info(html)
+    assert r.inferred_sales_type == "invitation"
+
+
+def test_inferred_sales_type_unknown_when_no_keywords():
+    """キーワードがない本文は unknown のまま。"""
+    html = "<p>発売日は 5月22日 です。</p>"
+    r = extract_body_info(html)
+    assert r.inferred_sales_type == "unknown"
+
+
+def test_inferred_sales_type_lottery_takes_priority_over_first_come():
+    """「抽選」+「先着」が両方書かれている場合、抽選を優先 (販売メインが抽選の想定)。"""
+    html = "<p>本商品は抽選販売を実施します。落選の場合は先着販売となります。</p>"
+    r = extract_body_info(html)
+    assert r.inferred_sales_type == "lottery"

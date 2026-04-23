@@ -23,6 +23,9 @@ DISABLED_SOURCES: frozenset[str] = frozenset(
         "pokecawatch_chusen",
         "amazon_search",
         "pokemoncenter_online_guide",
+        # 2026-04-23: まとめ記事系で一次情報ではない。audit 結果 events=8 で全 archived、
+        # strong=0 / precision=0%。質優先方針に合わない。
+        "nyuka_now_news",
         "twitter_pokecayoyaku",
         "twitter_pokecamatomeru",
         "twitter_pokecawatch",
