@@ -52,7 +52,7 @@ lottery_upsert 側でも新規 insert 時に apply_end_at 過去は自動 archiv
 1. **non_tokyo_metro**: `src/pokebot/lib/region.py` の allowlist 外の cardlabo / pokemoncenter (active 対象)
 2. **apply_ended**: `apply_end_at` が now から 1h 以上過去 (active 対象)
 3. **disabled_adapter**: retailer が `amazon / pokecawatch / yodobashi / biccamera / amiami / unknown` または NULL、もしくは store_name が `@...` (Twitter username) (active 対象)
-4. **stale_pending_review**: `first_seen_at` が 3日以上過去 の pending_review (sales_type 判別不能のまま放置)
+4. **stale_pending_review**: `first_seen_at` が 1日以上過去 の pending_review (sales_type 判別不能のまま放置)
 
 ### 推奨手順 (GHA 経由で secrets を漏らさない)
 
@@ -87,5 +87,5 @@ reason カテゴリで絞り込みたい場合は `retailer_name` や `apply_end
 - 対象 status: `active` / `pending_review` (archived / ended は触らない)
 - active 内の優先順位: `apply_ended` > `disabled_adapter` > `non_tokyo_metro`
 - `store_name IS NULL` の chain-wide 告知は non_tokyo_metro 判定では温存 (誤 archive 防止)
-- pending_review は `first_seen_at < now - 3日` のみ対象 (最近分はフィルタ調整の余地を残す)
+- pending_review は `first_seen_at < now - 1日` のみ対象 (最近分はフィルタ調整の余地を残す)
 - 最新の allowlist は `src/pokebot/lib/region.py`、disabled retailer セットは `src/pokebot/__main__.py` の `_DISABLED_ADAPTER_RETAILERS` 参照

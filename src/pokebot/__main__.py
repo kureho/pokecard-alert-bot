@@ -631,10 +631,11 @@ async def archive_stale_events(
     """
     _now = now if now is not None else datetime.now()
     apply_end_cutoff = _now - timedelta(hours=1)
-    # pending_review cutoff: 3日で archive。既存ゴミ (2週間前の store_voice 販売方法記事等)
-    # を掃除する用途。新規 insert は df91dfb のフィルタで発生しない設計なので、
-    # cutoff は短めで積極的に archive して良い。
-    pending_review_cutoff = _now - timedelta(days=3)
+    # pending_review cutoff: 1日で archive。
+    # df91dfb のフィルタ後は新規 pending_review は生成されない設計のため、
+    # DB に残っている pending_review は過去のゴミとみなして積極的に掃除する。
+    # 仮にフィルタ前に溜まった記事が次回 scrape で sales_type 判別できたら再 insert される。
+    pending_review_cutoff = _now - timedelta(days=1)
 
     allowed = await _compute_tokyo_metro_allowed_store_names()
     non_tokyo_retailers = set(allowed.keys())
@@ -722,7 +723,7 @@ async def job_archive_stale_events() -> None:
         print("=" * 72)
         print(f"# archive-stale-events ({mode})")
         print("=" * 72)
-        print(f"対象 (stale な active event): {count} 件")
+        print(f"対象 (stale event; active + pending_review): {count} 件")
 
         by_reason: dict[str, int] = {}
         for r in targets:
