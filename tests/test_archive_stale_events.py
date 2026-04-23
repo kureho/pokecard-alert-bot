@@ -287,6 +287,74 @@ async def test_unknown_retailer_is_archived(db):
     assert targets[0]["reason"] == "disabled_adapter"
 
 
+# ===== 追加カテゴリ: 古い pending_review =====
+
+
+async def _insert_pending_review(
+    db, *, title: str, key: str, first_seen_at: datetime
+) -> int:
+    repo = LotteryEventRepo(db)
+    new_id = await repo.create(
+        retailer_name="pokemoncenter",
+        store_name="ポケモンセンターメガトウキョー",
+        canonical_title=title,
+        sales_type="unknown",
+        dedupe_key=key,
+        apply_start_at=None,
+        apply_end_at=None,
+        source_primary_url="https://ex/" + key,
+        confidence_score=56,
+        official_confirmation_status="unconfirmed",
+        status="pending_review",
+    )
+    async with db.pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE lottery_events SET first_seen_at = $1 WHERE id = $2",
+            first_seen_at, new_id,
+        )
+    return new_id
+
+
+@pytest.mark.asyncio
+async def test_old_pending_review_is_archived(db):
+    """first_seen_at が 7日より前の pending_review は archive される。"""
+    old_id = await _insert_pending_review(
+        db, title="販売方法について", key="k-oldpr",
+        first_seen_at=NOW - timedelta(days=10),
+    )
+    count, targets = await archive_stale_events(db, execute=True, now=NOW)
+    assert count == 1
+    assert targets[0]["id"] == old_id
+    assert targets[0]["reason"] == "stale_pending_review"
+
+    repo = LotteryEventRepo(db)
+    async with db.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status FROM lottery_events WHERE id = $1", old_id
+        )
+    assert row["status"] == "archived"
+    # active list に載らない
+    active_ids = {e.id for e in await repo.list_active(limit=100)}
+    assert old_id not in active_ids
+
+
+@pytest.mark.asyncio
+async def test_recent_pending_review_stays(db):
+    """first_seen_at が 7日以内の pending_review は残す (フィルタ調整の余地を残す)。"""
+    recent_id = await _insert_pending_review(
+        db, title="販売方法について", key="k-recentpr",
+        first_seen_at=NOW - timedelta(days=3),
+    )
+    count, _ = await archive_stale_events(db, execute=True, now=NOW)
+    assert count == 0
+
+    async with db.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status FROM lottery_events WHERE id = $1", recent_id
+        )
+    assert row["status"] == "pending_review"
+
+
 @pytest.mark.asyncio
 async def test_mixed_categories_in_single_run(db):
     """3 カテゴリが混在していても全て archive される。"""

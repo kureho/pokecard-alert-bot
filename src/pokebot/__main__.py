@@ -606,27 +606,32 @@ _DISABLED_ADAPTER_RETAILERS: frozenset[str] = frozenset(
 async def archive_stale_events(
     db: Database, *, execute: bool, now: datetime | None = None
 ) -> tuple[int, list[dict]]:
-    """stale な active event を archived に更新する。以下のいずれかに該当する event が対象:
+    """stale な event を archived に更新する。以下のいずれかに該当する event が対象:
 
-    1. non_tokyo_metro: cardlabo / pokemoncenter で東京近郊 allowlist 外の store
-    2. apply_ended:     apply_end_at が now より 1h 以上過去 (受付終了済み)
-    3. disabled_adapter: retailer が disabled adapter 由来 (amazon, pokecawatch 等)
-                         または store_name が Twitter username ("@xxx")
+    active 対象:
+      1. non_tokyo_metro: cardlabo / pokemoncenter で東京近郊 allowlist 外の store
+      2. apply_ended:     apply_end_at が now より 1h 以上過去 (受付終了済み)
+      3. disabled_adapter: retailer が disabled adapter 由来 (amazon, pokecawatch 等)
+                           または store_name が Twitter username ("@xxx")
+
+    pending_review 対象:
+      4. stale_pending_review: first_seen_at が 7日以上過去 (sales_type 判別不能のまま放置された event)
 
     - execute=False: dry-run。対象を列挙するだけで DB は変更しない。
     - execute=True:  対象を status='archived' に UPDATE。
 
     Returns: (対象件数, 対象レコードのリスト)
-      各レコードには 'reason' キー ('non_tokyo_metro' | 'apply_ended' | 'disabled_adapter')
-      が付く。複数条件に該当する場合の優先順は apply_ended > disabled_adapter > non_tokyo_metro。
+      各レコードに 'reason' キーが付く。
+      active 内の複数条件に該当する場合の優先順は apply_ended > disabled_adapter > non_tokyo_metro。
 
     安全性:
     - 削除ではなく status 遷移なので、ロールバックは SQL 一発 (ACCEPTANCE.md 参照)
-    - status='active' な event だけが対象。archived/pending_review/ended は触らない
+    - archived / ended は触らない
     - 冪等: 既に archived のものは次回以降対象にならない
     """
     _now = now if now is not None else datetime.now()
     apply_end_cutoff = _now - timedelta(hours=1)
+    pending_review_cutoff = _now - timedelta(days=7)
 
     allowed = await _compute_tokyo_metro_allowed_store_names()
     non_tokyo_retailers = set(allowed.keys())
@@ -634,37 +639,45 @@ async def archive_stale_events(
     async with db.pool.acquire() as conn:
         rows = await conn.fetch(
             """SELECT id, retailer_name, store_name, canonical_title,
-                      sales_type, first_seen_at, apply_end_at
+                      sales_type, first_seen_at, apply_end_at, status
                FROM lottery_events
-               WHERE status = 'active'
+               WHERE status IN ('active', 'pending_review')
                ORDER BY retailer_name NULLS LAST, store_name NULLS LAST, id""",
         )
 
     to_archive: list[dict] = []
     for r in rows:
+        status = r["status"]
         retailer = r["retailer_name"]
         store = r["store_name"]
         apply_end_at = r["apply_end_at"]
+        first_seen_at = r["first_seen_at"]
 
         reason: str | None = None
 
-        # (1) apply_ended: 時刻情報が明確な受付終了を最優先
-        if apply_end_at is not None and apply_end_at < apply_end_cutoff:
-            reason = "apply_ended"
+        if status == "pending_review":
+            # (4) 古い pending_review: sales_type 判別不能のまま 7 日以上残留している event。
+            # 新規 insert はフィルタで pending_review を出さないので、既存のゴミ掃除に使う。
+            if first_seen_at is not None and first_seen_at < pending_review_cutoff:
+                reason = "stale_pending_review"
+        else:  # active
+            # (1) apply_ended: 時刻情報が明確な受付終了を最優先
+            if apply_end_at is not None and apply_end_at < apply_end_cutoff:
+                reason = "apply_ended"
 
-        # (2) disabled_adapter: Twitter store_name か disabled retailer
-        # retailer_name は NOT NULL 制約があるので NULL は来ない想定。保険として unknown 扱い。
-        if reason is None:
-            normalized_retailer = (retailer or "unknown").lower()
-            is_twitter_store = bool(store) and store.startswith("@")
-            if normalized_retailer in _DISABLED_ADAPTER_RETAILERS or is_twitter_store:
-                reason = "disabled_adapter"
+            # (2) disabled_adapter: Twitter store_name か disabled retailer
+            # retailer_name は NOT NULL 制約があるので NULL は来ない想定。保険として unknown 扱い。
+            if reason is None:
+                normalized_retailer = (retailer or "unknown").lower()
+                is_twitter_store = bool(store) and store.startswith("@")
+                if normalized_retailer in _DISABLED_ADAPTER_RETAILERS or is_twitter_store:
+                    reason = "disabled_adapter"
 
-        # (3) non_tokyo_metro: 東京近郊 allowlist 外の cardlabo / pokemoncenter
-        if reason is None and retailer in non_tokyo_retailers:
-            # store_name が NULL/空 の chain-wide 告知は温存 (誤 archive 防止)
-            if store and store not in allowed.get(retailer, set()):
-                reason = "non_tokyo_metro"
+            # (3) non_tokyo_metro: 東京近郊 allowlist 外の cardlabo / pokemoncenter
+            if reason is None and retailer in non_tokyo_retailers:
+                # store_name が NULL/空 の chain-wide 告知は温存 (誤 archive 防止)
+                if store and store not in allowed.get(retailer, set()):
+                    reason = "non_tokyo_metro"
 
         if reason is None:
             continue
@@ -679,7 +692,8 @@ async def archive_stale_events(
             await conn.execute(
                 """UPDATE lottery_events
                    SET status = 'archived', updated_at = CURRENT_TIMESTAMP
-                   WHERE id = ANY($1::bigint[]) AND status = 'active'""",
+                   WHERE id = ANY($1::bigint[])
+                     AND status IN ('active', 'pending_review')""",
                 ids,
             )
 
