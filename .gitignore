@@ -5,3 +5,5 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
+# Supabase CLI の実行時キャッシュ (コミット不要)
+supabase/.temp/
