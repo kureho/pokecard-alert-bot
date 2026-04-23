@@ -21,17 +21,15 @@ pokemoncenter_online_guide / twitter_× 7
 
 ### 🔴 優先度高 (即やる)
 
-- [ ] **問題1: apply_end_at が過去の active event の自動 archive**
-  - 現状: active 11件のうち id=271 (yamada 4/21 終了), id=270 (rakuten 2026-01-26 終了) が active 残存
-  - 対策: `lottery_upsert.apply` に `if apply_end_at < now - 1h → event_status='archived'` を追加
-  - 追加: `archive-non-tokyo-metro` を `archive-stale-events` にリネーム + 期間終了 event も対象化
-  - 実装 + テスト + push: 20分程度
+- [x] **問題1: apply_end_at が過去の active event の自動 archive** (2026-04-23 実装済)
+  - `lottery_upsert.apply` に `APPLY_END_GRACE=1h` 超過で `event_status='archived'` を追加
+  - `archive-non-tokyo-metro` を `archive-stale-events` にリネーム。reason を 3 カテゴリ化
+  - 新規テスト: test_apply_end_at_past_is_archived_on_create / test_existing_active_event_archived_when_apply_end_passes 等
 
-- [ ] **問題2: disabled adapter 由来の orphan active event の cleanup**
-  - 現状: active 11件のうち 9件が amazon / pokecawatch / Twitter 経由 (disabled)
-  - 対象: id=275, 266, 238, 229, 194, 168, 151 等
-  - 対策: cleanup job で retailer in {amazon, pokecawatch, unknown} or store_name LIKE '@%' を archive
-  - 実装 + dry-run → execute: 10分程度
+- [x] **問題2: disabled adapter 由来の orphan active event の cleanup** (2026-04-23 実装済)
+  - `archive-stale-events` に `_DISABLED_ADAPTER_RETAILERS` (amazon/pokecawatch/yodobashi/biccamera/amiami/unknown) と `store LIKE '@%'` 判定を追加
+  - dry-run → execute は GHA workflow_dispatch で `cleanup_execute=true` 選択時のみ
+  - **次セッションで dry-run 実行 → 件数確認 → 本番 execute の運用手順を踏むこと**
 
 ### 🟡 優先度中 (後日)
 

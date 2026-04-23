@@ -22,6 +22,11 @@ log = logging.getLogger(__name__)
 # 通知対象から除外する。過去数ヶ月分の RSS 履歴が LINE に流れる事故を防ぐ。
 SOURCE_FRESHNESS_WINDOW = timedelta(days=14)
 
+# apply_end_at が now からこの grace を超えて過去なら 'archived' 扱いにする。
+# 1h 程度の grace を持たせるのは、観測タイミングの揺らぎや TZ 混在 (lessons.md) で
+# わずかに past 判定されたイベントを誤 archive しないため。
+APPLY_END_GRACE = timedelta(hours=1)
+
 
 @dataclass
 class UpsertOutcome:
@@ -207,6 +212,14 @@ class LotteryEventUpsertService:
             age = now - candidate.source_published_at
             if age > SOURCE_FRESHNESS_WINDOW:
                 event_status = "archived"
+
+        # apply_end_at が既に過去 (1h grace 超) なら受付終了済み → archived。
+        # 既存 active event も update path で archive 遷移する (下の `if event_status == "archived" ...`)。
+        if (
+            candidate.apply_end_at is not None
+            and (now - candidate.apply_end_at) > APPLY_END_GRACE
+        ):
+            event_status = "archived"
 
         # sales_type=unknown は抽選/先着の判別ができていない → 通知対象外
         if candidate.sales_type in ("unknown", "", None):

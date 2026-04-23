@@ -125,6 +125,66 @@ async def test_fresh_announcement_stays_active(db):
 
 
 @pytest.mark.asyncio
+async def test_apply_end_at_past_is_archived_on_create(db):
+    """apply_end_at が 1h 以上過去の新規 candidate は archived で保存 (通知対象外)。"""
+    from datetime import timedelta
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    ended = _cand(
+        product_name_normalized="終了告知",
+        apply_start_at=now - timedelta(days=5),
+        apply_end_at=now - timedelta(hours=2),
+    )
+    ended.source_published_at = now - timedelta(days=3)  # fresh enough
+    out = await svc.apply(ended, now=now)
+    assert out and out.is_new
+    events = await LotteryEventRepo(db).list_active(limit=100)
+    assert out.event_id not in {e.id for e in events}
+
+
+@pytest.mark.asyncio
+async def test_apply_end_at_within_grace_stays_active(db):
+    """apply_end_at が 1h 以内なら active のまま (境界の 1h grace)。"""
+    from datetime import timedelta
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    just_ended = _cand(
+        product_name_normalized="直前終了",
+        apply_start_at=now - timedelta(days=5),
+        apply_end_at=now - timedelta(minutes=30),
+    )
+    just_ended.source_published_at = now - timedelta(days=1)
+    out = await svc.apply(just_ended, now=now)
+    assert out and out.is_new
+    events = await LotteryEventRepo(db).list_active(limit=100)
+    assert out.event_id in {e.id for e in events}
+
+
+@pytest.mark.asyncio
+async def test_existing_active_event_archived_when_apply_end_passes(db):
+    """既存 active event が再観測時に apply_end_at 過去判定で archived に遷移する。"""
+    from datetime import timedelta
+    svc = await _setup(db)
+    now = datetime(2026, 4, 21, 12)
+    # 最初は apply 受付中として登録 (apply_end_at を now+1d に上書き)
+    ongoing = _cand(
+        apply_start_at=now - timedelta(days=1),
+        apply_end_at=now + timedelta(days=1),
+    )
+    ongoing.source_published_at = now - timedelta(days=1)
+    o1 = await svc.apply(ongoing, now=now)
+    assert o1.is_new
+    events = await LotteryEventRepo(db).list_active(limit=100)
+    assert o1.event_id in {e.id for e in events}
+
+    # 時間経過: 受付終了から 3h 経過した now で再観測 (同じ candidate)
+    later_now = now + timedelta(days=1, hours=3)
+    await svc.apply(ongoing, now=later_now)
+    events2 = await LotteryEventRepo(db).list_active(limit=100)
+    assert o1.event_id not in {e.id for e in events2}
+
+
+@pytest.mark.asyncio
 async def test_unknown_sales_type_is_pending_review(db):
     """sales_type=unknown は status=pending_review で active list に載らない。"""
     svc = await _setup(db)
