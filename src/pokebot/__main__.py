@@ -34,10 +34,10 @@ log = logging.getLogger("pokebot")
 # 各 Job に含める adapter (sources テーブル側の source_name と一致)
 PRODUCT_SYNC_ADAPTERS = ["pokemon_official_products"]
 # 2026-04-23〜24: Supabase edge function (fetch-jp) proxy 経由で以下を復活:
-# - amazon_search: proxy 経由で 200 (Bot 検知回避)
-# - amiami_lottery: proxy 経由 + 最新 Chrome UA で 200
-# 以下は Akamai の HTTP/2 fingerprint block で Deno proxy でも突破不可 (保留):
-# - yodobashi_lottery / biccamera_lottery
+# - amiami_lottery: proxy + 最新 Chrome UA で 200 ✅
+# 以下は本番実地テストで 503/502 のため disable 継続:
+# - amazon_search: /s 検索 API が proxy 経由でも 503 (Amazon の Bot 対策)
+# - yodobashi_lottery / biccamera_lottery: Akamai HTTP/2 fingerprint block (Deno 不可)
 # 以下は現行状態のまま disable:
 # - pokemoncenter_online_guide: health check 専用で candidate を返さない設計
 # - pokecawatch_chusen: 構造変更 or block
@@ -51,7 +51,6 @@ LOTTERY_WATCH_ADAPTERS = [
     "rakuten_books_entry",
     "yamada_lottery",
     "hbst_lottery",
-    "amazon_search",
     "amiami_lottery",
 ]
 

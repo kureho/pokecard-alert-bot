@@ -21,6 +21,9 @@ DISABLED_SOURCES: frozenset[str] = frozenset(
         # Playwright 等 headless browser を使う別手段が必要。現状は保留。
         "yodobashi_lottery",
         "biccamera_lottery",
+        # amazon の /s 検索 API は proxy 経由でも 503 (Bot 対策が商品検索に厳しい)。
+        # トップ / 商品詳細なら取れるので、将来的に特定 ASIN を monitor する形に作り直す余地あり。
+        "amazon_search",
         "pokecawatch_chusen",
         "pokemoncenter_online_guide",
         # 2026-04-23: まとめ記事系で一次情報ではない。audit 結果 events=8 で全 archived、
