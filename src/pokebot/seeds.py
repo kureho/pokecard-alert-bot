@@ -169,6 +169,15 @@ SEED_SOURCES: list[tuple[str, str, str, int]] = [
         "https://www.hbst.net/feed/",
         90,
     ),
+    # Google News RSS アグリゲーター。domain whitelist で複数販売店 (トイザらス/HMV/
+    # Joshin/GEO/イオン/SNKRDUNK 等) の抽選告知を 1 adapter で集約する。
+    # 2次情報サイト / まとめ記事は adapter 内で skip。既存 adapter 管轄 domain も除外。
+    (
+        "google_news_rss",
+        "aggregator",
+        "https://news.google.com/rss/search",
+        85,
+    ),
 ]
 
 
