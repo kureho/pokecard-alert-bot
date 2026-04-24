@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -216,17 +217,23 @@ class NotificationDispatcher:
                 result.skipped_low_confidence += 1
                 return
 
-        # Product 単位クールダウン: 同じ商品が他店舗で既に new 送信済み (24h以内) なら suppress。
+        # Product 単位クールダウン: 同じ商品が他店舗で既に new 送信済み (72h以内) なら suppress。
         # 「アビスアイ抽選」が浜松で通知済みなら、名古屋駅前/大須/静岡/岐阜の通知は抑止。
         # 同じ商品情報の繰り返しを防ぎ、LINE 枠を温存する。
+        # SKIP_PRODUCT_COOLDOWN=1 (env) でこの cooldown を一時無効化できる。
+        # 初回スクレイプ洪水事故の巻き戻し時など、複数 strong event をまとめて送りたい時に使う。
         if notification_type == "new" and event.product_name_normalized:
-            last_product_sent = await self._notif.get_last_sent_for_product(
-                product_name_normalized=event.product_name_normalized,
-                notification_types=("new",),
+            skip_cooldown = os.environ.get("SKIP_PRODUCT_COOLDOWN", "").lower() in (
+                "1", "true", "yes",
             )
-            if last_product_sent is not None and (now - last_product_sent) < PRODUCT_NEW_COOLDOWN:
-                result.suppressed += 1
-                return
+            if not skip_cooldown:
+                last_product_sent = await self._notif.get_last_sent_for_product(
+                    product_name_normalized=event.product_name_normalized,
+                    notification_types=("new",),
+                )
+                if last_product_sent is not None and (now - last_product_sent) < PRODUCT_NEW_COOLDOWN:
+                    result.suppressed += 1
+                    return
 
         # dedupe key: new は1度だけ送る。update は告知内容 (apply/result/purchase/
         # sales_type/status/条件) のハッシュで差別化し、内容変化時だけ 1 本送れるようにする。

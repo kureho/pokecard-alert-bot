@@ -370,15 +370,19 @@ class LotteryEventRepo:
     async def list_active_since(
         self, since: datetime, *, limit: int = 200
     ) -> list[LotteryEvent]:
-        """first_seen_at >= since の active event を新しい順に返す。
+        """first_seen_at >= since の active event を返す。
 
-        古い告知 (store_voice feed の過去履歴) を通知対象から除外するためのフィルタ。
+        並び順は「締切が迫っているもの優先」= apply_end_at ASC NULLS LAST。
+        期限切迫 event を先にピックアップすることで、MAX_NOTIFY_PER_RUN 枠を
+        最重要情報から消費できる。apply_end_at が NULL の event は後回し
+        (期限情報なし = 緊急度判定不能)。同期限は first_seen_at DESC で新しい順。
         """
         async with self._db.pool.acquire() as conn:
             rows = await conn.fetch(
                 """SELECT * FROM lottery_events
                    WHERE status = 'active' AND first_seen_at >= $1
-                   ORDER BY first_seen_at DESC LIMIT $2""",
+                   ORDER BY apply_end_at ASC NULLS LAST, first_seen_at DESC
+                   LIMIT $2""",
                 since, limit,
             )
         return [self._row_to_event(r) for r in rows]

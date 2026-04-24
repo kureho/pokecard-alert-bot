@@ -36,6 +36,10 @@ on:
         description: "archive-stale-events job で実際にUPDATEする (false=dry-run)"
         type: boolean
         default: false
+      skip_product_cooldown:
+        description: "PRODUCT_NEW_COOLDOWN (同商品 72h) を一時的に無効化 (緊急救済用)"
+        type: boolean
+        default: false
 
 # Fast と Full は DB 側の ON CONFLICT / dedupe で安全に並列可能だが、
 # 同じ SELECT → INSERT を同時に走らせると UNIQUE 競合で片側失敗するため、
@@ -92,6 +96,9 @@ jobs:
           MAX_NOTIFY_PER_RUN: ${{ inputs.max_per_run || '2' }}
           # LINE 無料枠 200/月 ≒ 6.7/日 の安全圏として 6 に制限。
           MAX_NOTIFY_PER_DAY: "6"
+          # 手動 dispatch で skip_product_cooldown=true の時のみ同商品 72h 抑制を無効化。
+          # schedule 実行時は inputs 未定義 → false → '0' (通常動作)。
+          SKIP_PRODUCT_COOLDOWN: ${{ inputs.skip_product_cooldown && '1' || '0' }}
           # archive-stale-events job 用: true の時だけ実際に UPDATE、
           # それ以外は dry-run (件数とサンプル print のみ、DB 変更なし)。
           # 他 job には影響しない (env が未使用なので無視される)。
