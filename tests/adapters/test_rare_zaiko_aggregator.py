@@ -76,7 +76,8 @@ def test_normalize_retailer_known_patterns():
 
 
 def test_normalize_retailer_unknown_returns_unknown():
-    assert _normalize_retailer("チェルモ3rd") == "unknown"
+    """パターン未登録の retailer は unknown を返す。"""
+    assert _normalize_retailer("謎の TCG 店-XYZ") == "unknown"
     assert _normalize_retailer("") == "unknown"
 
 
@@ -90,6 +91,39 @@ def test_infer_sales_type_patterns():
     assert _infer_sales_type("先着販売") == "first_come"
     assert _infer_sales_type("") == "unknown"
     assert _infer_sales_type("不明形式") == "unknown"
+
+
+def test_infer_sales_type_title_promotes_lottery_to_preorder():
+    """記事タイトルに「予約」あり + カラムが抽選販売系 → preorder_lottery に昇格。
+    content_dedupe_key の統合性向上 (c_labo_blog 由来の preorder_lottery と揃う)。
+    """
+    # カラム「抽選販売」単体なら lottery
+    assert _infer_sales_type("抽選販売") == "lottery"
+    # タイトルに「予約」あれば preorder_lottery に昇格
+    assert _infer_sales_type("抽選販売", article_title="拡張パック「アビスアイ」予約まとめ") == "preorder_lottery"
+    # WEB抽選 / 店頭抽選 も同様に昇格
+    assert _infer_sales_type("WEB抽選", article_title="○○予約情報") == "preorder_lottery"
+    assert _infer_sales_type("店頭抽選", article_title="商品予約開始のお知らせ") == "preorder_lottery"
+
+
+def test_infer_sales_type_non_lottery_not_promoted():
+    """先着・整理券・招待は「予約」タイトルでも昇格しない (sales_type の意味が異なる)。"""
+    assert _infer_sales_type("先着販売", article_title="予約開始") == "first_come"
+    assert _infer_sales_type("整理券配布", article_title="予約情報") == "numbered_ticket"
+    assert _infer_sales_type("招待リクエスト", article_title="予約") == "invitation"
+
+
+def test_normalize_retailer_new_patterns():
+    """2026-04-24 追加パターン (TCG 専門店チェーン)。"""
+    assert _normalize_retailer("BIGMAGIC 池袋") == "bigmagic"
+    assert _normalize_retailer("magi大宮") == "magi"
+    assert _normalize_retailer("WonderGOO瑞江") == "wondergoo"
+    assert _normalize_retailer("カードボックス横浜西口") == "card_box"
+    assert _normalize_retailer("カードキングダム秋葉原") == "card_kingdom"
+    assert _normalize_retailer("イエローサブマリン") == "yellow_submarine"
+    assert _normalize_retailer("チェルモ3rd") == "chelmo"
+    assert _normalize_retailer("コレイズ") == "koreizu"
+    assert _normalize_retailer("でじたみんYahoo!") == "dejitamin"
 
 
 def test_parse_apply_end_basic():
@@ -137,7 +171,9 @@ async def test_pokemon_lottery_article_creates_candidates():
     assert regions == {"オンライン", "東京都"}
     amazon = next(c for c in candidates if "Amazon" in c.store_name)
     assert amazon.retailer_name == "amazon"
-    assert amazon.sales_type == "lottery"
+    # 記事タイトルに「予約」があるため、「抽選販売」カラム → preorder_lottery に昇格
+    # (c_labo_blog 由来の preorder_lottery と同じ sales_type になり content_dedupe_key が揃う)
+    assert amazon.sales_type == "preorder_lottery"
     assert amazon.apply_end_at is not None
     assert amazon.product_name_normalized == "アビスアイ"
 

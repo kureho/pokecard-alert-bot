@@ -104,6 +104,30 @@ _RETAILER_PATTERNS: list[tuple[str, str]] = [
     ("LivePocket", "livepocket"),
     ("パスマーケット", "passmarket"),
     ("イトーヨーカドー", "ito_yokado"),
+    # TCG 専門店チェーン (2026-04-24 追加、rare-zaiko 経由で unknown だったもの)
+    ("BIGMAGIC", "bigmagic"),
+    ("BOOKOFF", "bookoff"),
+    ("magi", "magi"),
+    ("WonderGoo", "wondergoo"),
+    ("WonderGOO", "wondergoo"),
+    ("イエローサブマリン", "yellow_submarine"),
+    ("カードキングダム", "card_kingdom"),
+    ("カードコレクト", "card_collect"),
+    ("カードボックス", "card_box"),
+    ("チェルモ", "chelmo"),
+    ("ジラフル", "giraflu"),
+    ("コレイズ", "koreizu"),
+    ("ホビステオンライン", "hbst_online"),
+    ("でじたみん", "dejitamin"),
+    ("ときわ書房", "tokiwa_shobo"),
+    ("オリパーク", "oripark"),
+    ("ドラマ", "drama"),
+    ("TCG STORE", "tcg_store"),
+    ("Tokyo Otaku Mode", "tokyo_otaku_mode"),
+    ("キデイランド", "kiddyland"),
+    ("コロコロBASE", "corocoro_base"),
+    ("お宝あっとマーケット", "otakara_at_market"),
+    ("スタートレカ", "star_toreka"),
 ]
 
 # 「抽選形式」カラムの文字列 → sales_type。
@@ -142,11 +166,20 @@ def _normalize_retailer(store_name: str) -> str:
     return "unknown"
 
 
-def _infer_sales_type(lottery_form: str) -> str:
-    """抽選形式カラムから sales_type を決定。該当なしは unknown。"""
+def _infer_sales_type(lottery_form: str, *, article_title: str = "") -> str:
+    """抽選形式カラム (+ 記事タイトル補強) から sales_type を決定。
+
+    記事タイトルに「予約」が含まれる場合、カラムが「抽選販売」でも preorder_lottery
+    を優先する。これにより c_labo_blog (本文で preorder_lottery 判定) と同一の
+    sales_type で統合されやすくなる。
+    """
     s = lottery_form or ""
+    t = article_title or ""
     for pat, st in _SALES_TYPE_PATTERNS:
         if pat in s:
+            # 記事タイトルに「予約」があり、判定結果が lottery なら preorder_lottery に昇格
+            if st == "lottery" and "予約" in t:
+                return "preorder_lottery"
             return st
     return "unknown"
 
@@ -281,7 +314,7 @@ class RareZaikoAggregatorAdapter(SourceAdapter):
                     continue
 
                 lottery_form = row["lottery_form"] or ""
-                sales_type = _infer_sales_type(lottery_form)
+                sales_type = _infer_sales_type(lottery_form, article_title=title)
                 if sales_type == "unknown":
                     # 質優先: 抽選形式判別不能な行は candidate 発行しない
                     continue
