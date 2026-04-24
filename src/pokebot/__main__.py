@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from . import adapters  # noqa: F401  # side-effect: all adapters register
 from .adapters.registry import AdapterRegistry
+from .lib.confidence import CONFIDENCE_STRONG_THRESHOLD
 from .lib.dedupe import build_notification_dedupe_key
 from .logging_setup import setup_logging
 from .notify.line import DryRunNotifier, LineNotifier, Notifier
@@ -203,13 +204,23 @@ async def _run_lottery_watch(adapter_names: list[str]) -> None:
                 if out.is_new:
                     total_new += 1
                     if is_first_run:
-                        await _seed_notification_sent(
-                            notif_repo,
-                            lottery_event_id=out.event_id,
-                            dedupe_key=out.dedupe_key,
-                            now=now,
-                        )
-                        total_seeded += 1
+                        # 初回スクレイプ洪水防止の seed。ただし confirmed_strong 以上 (>=85) は
+                        # 「今検出された強確度 event」なので seed せず即時通知対象にする。
+                        # seed の本来目的は「過去 N ヶ月の RSS 履歴が一気に LINE に流れる」事故
+                        # 防止であり、強確度 event まで蓋するのは想定外。
+                        if out.confidence_score >= CONFIDENCE_STRONG_THRESHOLD:
+                            log.info(
+                                "skip first-run seed for strong event %s (score=%d)",
+                                out.event_id, out.confidence_score,
+                            )
+                        else:
+                            await _seed_notification_sent(
+                                notif_repo,
+                                lottery_event_id=out.event_id,
+                                dedupe_key=out.dedupe_key,
+                                now=now,
+                            )
+                            total_seeded += 1
                 elif out.is_updated:
                     total_updated += 1
         log.info(

@@ -34,6 +34,9 @@ class UpsertOutcome:
     is_new: bool
     is_updated: bool
     dedupe_key: str
+    # 新規/更新後の event の confidence_score。呼び出し側で「強確度なら即時通知、
+    # 弱ければ seed に回す」の判定に使う。
+    confidence_score: int = 0
 
 
 def _infer_sale_status(
@@ -277,7 +280,10 @@ class LotteryEventUpsertService:
                     extracted_payload=candidate.extracted_payload,
                     **evidence_fields_for_link,
                 )
-            return UpsertOutcome(event_id=new_id, is_new=True, is_updated=False, dedupe_key=dedupe_key)
+            return UpsertOutcome(
+                event_id=new_id, is_new=True, is_updated=False,
+                dedupe_key=dedupe_key, confidence_score=evidence_score,
+            )
 
         # 既存: 差分比較
         updates: dict = {}
@@ -360,4 +366,5 @@ class LotteryEventUpsertService:
             is_new=False,
             is_updated=meaningful_changes,
             dedupe_key=dedupe_key,
+            confidence_score=new_conf_score,
         )
