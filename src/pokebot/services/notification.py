@@ -199,6 +199,13 @@ class NotificationDispatcher:
         - confidence_level IS NULL (既存 event) → legacy official_confirmation_status +
           confidence_score で判定 (fallback)
         """
+        # Event-centric gate: この event に対し LINE 送信済みなら、type を問わず suppress。
+        # 「1 event = 1 LINE 通知」を保証する (new + update + deadline で 2-3 通届く
+        # 問題を解消)。内容変更や締切前リマインダは daily_summary で補完する。
+        if await self._notif.has_any_sent_for_event(event.id):
+            result.suppressed += 1
+            return
+
         if event.sales_type not in NOTIFY_SALES_TYPES:
             result.skipped_low_confidence += 1
             return
@@ -364,10 +371,12 @@ class NotificationDispatcher:
         return row["c"] if row else 0
 
     async def dispatch(self, *, now: datetime) -> NotificationResult:
-        """active な lottery_events を処理。新規 (new 未送) を優先的に送る。
+        """active な lottery_events を処理。1 event につき最大 1 LINE 通知を発火させる。
 
-        Phase 1 は update 通知を明示的に発火するためのフックは後続実装。
-        この関数は "未送信 new" を new として処理する。
+        type 選択の優先度:
+          - 応募期限が deadline_window (3h) 以内 → 'deadline' 型で送信
+          - それ以外 → 'new' 型で送信
+        event-level dedup (has_any_sent_for_event) で既に送信済みなら suppress する。
         """
         result = NotificationResult()
         # 通知抑止時間帯 (夜21時〜翌朝10時) は送らず、次の run で拾い直す。
@@ -398,16 +407,34 @@ class NotificationDispatcher:
                     per_day_used,
                 )
                 break
-            before_new = result.new_sent
-            await self.dispatch_for_event(
-                ev,
-                notification_type="new",
-                now=now,
-                result=result,
-            )
-            if result.new_sent > before_new:
+            # type 選択: 期限 3h 以内なら deadline 型、そうでなければ new 型。
+            # 1 event = 1 LINE なので、期限接近の event には deadline 型を選ぶことで
+            # 「⏰ 締切前」の伝え方にできる。
+            notif_type = self._decide_notification_type(ev, now)
+            before = result.new_sent + result.update_sent
+            if notif_type == "deadline":
+                await self._dispatch_deadline_for_event(ev, now=now, result=result)
+            else:
+                await self.dispatch_for_event(
+                    ev,
+                    notification_type="new",
+                    now=now,
+                    result=result,
+                )
+            after = result.new_sent + result.update_sent
+            if after > before:
                 sent_this_run += 1
         return result
+
+    def _decide_notification_type(self, event: LotteryEvent, now: datetime) -> str:
+        """event の状態から最適な notification type を選ぶ。
+        現状は deadline (3h 以内) / new の 2 択。
+        """
+        if event.apply_end_at is not None:
+            remaining = event.apply_end_at - now
+            if timedelta(0) <= remaining <= self._deadline_window:
+                return "deadline"
+        return "new"
 
     async def dispatch_updates(self, *, now: datetime) -> NotificationResult:
         """直近 updated された active event で、既に new 通知送信済みのものに対し
@@ -511,6 +538,10 @@ class NotificationDispatcher:
         self, event: LotteryEvent, *, now: datetime, result: NotificationResult
     ) -> None:
         """1 event の deadline 通知を送る (新 flow 専用: dedupe, send, mark)。"""
+        # Event-centric gate: 1 event = 1 LINE 通知を保証
+        if await self._notif.has_any_sent_for_event(event.id):
+            result.suppressed += 1
+            return
         if event.sales_type not in NOTIFY_SALES_TYPES:
             return
         # confidence_level ベース判定 (+ legacy fallback)

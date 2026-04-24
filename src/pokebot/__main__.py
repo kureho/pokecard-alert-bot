@@ -260,6 +260,11 @@ async def job_notify_dispatch() -> None:
             max_per_day=_env_int("MAX_NOTIFY_PER_DAY", DEFAULT_MAX_PER_DAY),
         )
         now = datetime.now()
+        # Event-centric 設計 (Plan B 2026-04-24): dispatch() 1 本で new/deadline を
+        # event ごとに最適 type 選択して送信。1 event = 1 LINE 通知保証。
+        # 旧 dispatch_deadlines / dispatch_updates は event-level gate で自動的に
+        # 0 件になる (既送信 event は suppress) ため冗長だが、gateway 層で計測ログを
+        # 残すため呼び出し自体は維持する。将来完全削除予定。
         result = await disp.dispatch(now=now)
         log.info(
             "notify_dispatch: new=%d update=%d suppressed=%d skipped_low=%d",
@@ -267,22 +272,6 @@ async def job_notify_dispatch() -> None:
             result.update_sent,
             result.suppressed,
             result.skipped_low_confidence,
-        )
-
-        # 締切前 alert (apply_end_at が 3h 以内)
-        deadline_result = await disp.dispatch_deadlines(now=now)
-        log.info(
-            "notify_dispatch_deadlines: deadline=%d suppressed=%d",
-            deadline_result.update_sent,
-            deadline_result.suppressed,
-        )
-
-        # Update 通知: 既に new 送信済 event で significant field に変化があったもの
-        update_result = await disp.dispatch_updates(now=now)
-        log.info(
-            "notify_dispatch_updates: update=%d suppressed=%d",
-            update_result.update_sent,
-            update_result.suppressed,
         )
 
         # Daily summary (JST 09:00 窓で 1日1回)

@@ -46,6 +46,17 @@ class DigestEntry:
     confidence_level: str | None = None  # Tier 分離用 (confirmed_medium / candidate)
 
 
+@dataclass
+class DeadlineSoonEntry:
+    """apply_end_at が 24h 以内の active event (event-centric 設計で deadline 個別通知を
+    廃止したため、daily_summary で代替リマインドする)。"""
+
+    title: str
+    retailer: str
+    store_name: str | None
+    apply_end_at: datetime
+
+
 async def _collect(db: Database, now: datetime) -> SummarySnapshot:
     since_24h = now - timedelta(hours=24)
     async with db.pool.acquire() as conn:
@@ -136,12 +147,19 @@ async def _collect_unconfirmed_digest(
     ]
 
 
+def _fmt_short_dt(dt: datetime) -> str:
+    """M/D HH:MM の短縮表示。"""
+    return f"{dt.month}/{dt.day} {dt.hour:02d}:{dt.minute:02d}"
+
+
 def format_summary(
     snapshot: SummarySnapshot,
     digest: list[DigestEntry] | None = None,
+    deadline_soon: list[DeadlineSoonEntry] | None = None,
     *,
     tier_b_limit: int = 5,
     candidate_limit: int = 3,
+    deadline_limit: int = 8,
 ) -> str:
     lines = [
         "📊 ポケボット日次サマリ",
@@ -153,6 +171,20 @@ def format_summary(
         lines.append("▸ 失敗中 (3回以上): " + ", ".join(snapshot.failing_sources))
     else:
         lines.append("▸ 全ソース正常")
+
+    # ⏰ 締切前: event-centric 設計で個別 deadline 通知を廃止した代替リマインド。
+    # 応募期限が近い active event を期限順でまとめて通知する。
+    if deadline_soon:
+        lines.append("")
+        lines.append(f"⏰ 締切24h以内 ({len(deadline_soon)}件):")
+        for d in deadline_soon[:deadline_limit]:
+            loc = d.retailer
+            if d.store_name:
+                loc = f"{d.retailer}/{d.store_name}"
+            lines.append(
+                f"  {_fmt_short_dt(d.apply_end_at)} {loc[:20]}: {d.title[:40]}"
+            )
+
     if digest:
         # Tier 分離: confirmed_medium を優先して列挙、候補(candidate / legacy)は別枠
         tier_b = [d for d in digest if d.confidence_level == "confirmed_medium"]
@@ -170,6 +202,38 @@ def format_summary(
                 badge = f"[{d.cross_sources}src] " if d.cross_sources >= 2 else ""
                 lines.append(f"  {badge}{d.sales_type}: {d.title}")
     return "\n".join(lines)
+
+
+async def _collect_deadline_soon(
+    db: Database, now: datetime, *, within_hours: int = 24, limit: int = 15
+) -> list[DeadlineSoonEntry]:
+    """apply_end_at が now から within_hours 以内の active event を期限順で列挙。
+
+    event-centric 設計 (Plan B 2026-04-24) で個別 deadline 通知を廃止したため、
+    代替として daily_summary でまとめてリマインドする。
+    """
+    cutoff = now + timedelta(hours=within_hours)
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT canonical_title, retailer_name, store_name, apply_end_at
+               FROM lottery_events
+               WHERE status = 'active'
+                 AND apply_end_at IS NOT NULL
+                 AND apply_end_at >= $1
+                 AND apply_end_at <= $2
+               ORDER BY apply_end_at ASC
+               LIMIT $3""",
+            now, cutoff, limit,
+        )
+    return [
+        DeadlineSoonEntry(
+            title=(r["canonical_title"] or "")[:60],
+            retailer=r["retailer_name"] or "-",
+            store_name=r["store_name"],
+            apply_end_at=r["apply_end_at"],
+        )
+        for r in rows
+    ]
 
 
 class DailySummaryService:
@@ -223,7 +287,8 @@ class DailySummaryService:
 
         snapshot = await _collect(self._db, now)
         digest = await _collect_unconfirmed_digest(self._db, now)
-        msg = format_summary(snapshot, digest=digest)
+        deadline_soon = await _collect_deadline_soon(self._db, now)
+        msg = format_summary(snapshot, digest=digest, deadline_soon=deadline_soon)
 
         # claim: INSERT ON CONFLICT DO NOTHING. 衝突したら他プロセスが既に処理中。
         async with self._db.pool.acquire() as conn:

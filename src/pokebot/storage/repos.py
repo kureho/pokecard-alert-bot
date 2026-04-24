@@ -622,6 +622,26 @@ class NotificationRepo:
             )
         return row is not None
 
+    async def has_any_sent_for_event(self, lottery_event_id: int) -> bool:
+        """指定 event に対し LINE に実送信された通知 (new/update/deadline/result)
+        が 1 件でも存在するか。
+
+        Event-centric 設計で「1 event = 1 LINE 通知」を保証するための gate。
+        type='seed' / 'silence' / 'daily_summary' は除外する:
+          - seed: 初回スクレイプ洪水防止のための dedupe_key 予約で、実送信ではない
+          - silence / daily_summary: event 紐付きではない運用通知
+        """
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT 1 FROM notifications
+                   WHERE lottery_event_id = $1
+                     AND sent_at IS NOT NULL
+                     AND notification_type IN ('new', 'update', 'deadline', 'result')
+                   LIMIT 1""",
+                lottery_event_id,
+            )
+        return row is not None
+
     async def get_last_sent_at(
         self, *, lottery_event_id: int, notification_type: str
     ) -> datetime | None:

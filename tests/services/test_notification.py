@@ -252,8 +252,11 @@ async def test_dispatch_skips_unknown_sales_type(db):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_updates_fires_for_extended_event(db):
-    """new 通知送信済 event の significant field が変化 → update 通知が発火。"""
+async def test_dispatch_updates_suppressed_after_new_sent_event_centric(db):
+    """Event-centric 設計 (Plan B 2026-04-24):
+    1 event = 1 LINE 通知を徹底するため、new 送信済み event は内容変更があっても
+    update として LINE 再送しない。content 変更は daily_summary で扱う。
+    """
     eid = await _create_confirmed_event(db)
     notifier = FakeNotifier()
     disp = NotificationDispatcher(
@@ -264,17 +267,16 @@ async def test_dispatch_updates_fires_for_extended_event(db):
         max_per_run=10,
         max_per_day=150,
     )
-    # 先に new 通知を発火
     r_new = await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
     assert r_new.new_sent == 1
-    # event の apply_end_at を延長 (意味差分)
     await LotteryEventRepo(db).update(
         eid,
         apply_end_at=datetime(2026, 5, 20, 23, 59),
     )
-    # update 通知 dispatch (new 送信後 7時間以上経過 = UPDATE_COOLDOWN 超え)
     result = await disp.dispatch_updates(now=datetime(2026, 4, 21, 19, 10))
-    assert result.update_sent == 1
+    # 新設計では update 発火しない (suppressed)
+    assert result.update_sent == 0
+    assert result.suppressed == 1
 
 
 @pytest.mark.asyncio
@@ -401,8 +403,37 @@ async def test_dispatch_suppresses_same_product_other_store(db):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_deadlines_fires_when_apply_end_near(db):
-    """apply_end_at が 3h 以内に迫り、new 送信済みなら deadline 通知が送られる。"""
+async def test_dispatch_sends_deadline_type_for_urgent_event(db):
+    """Event-centric 設計: apply_end_at が 3h 以内に迫る event は初回から
+    deadline 型 (⏰) で送信される。new + deadline の 2 通体制ではなく、1 通。
+    """
+    eid = await _create_confirmed_event(db)
+    # apply_end_at を now から 2h 後に設定 (3h window 内)
+    urgent_end = datetime(2026, 4, 21, 14, 0)
+    await LotteryEventRepo(db).update(eid, apply_end_at=urgent_end)
+    notifier = FakeNotifier()
+    disp = NotificationDispatcher(
+        lottery_repo=LotteryEventRepo(db),
+        product_repo=ProductRepo(db),
+        notification_repo=NotificationRepo(db),
+        notifier=notifier,
+        max_per_run=10,
+        max_per_day=150,
+    )
+    now = datetime(2026, 4, 21, 12, 30)  # 1h30m 前
+    result = await disp.dispatch(now=now)
+    # deadline 型送信なので update_sent にカウント (_dispatch_deadline_for_event 仕様)
+    assert result.update_sent == 1
+    assert len(notifier.sent) == 1
+    msg = notifier.sent[0]
+    assert "⏰" in msg and "締切" in msg
+
+
+@pytest.mark.asyncio
+async def test_dispatch_event_level_dedup_prevents_duplicate_line(db):
+    """Event-centric: 1 event = 1 LINE 通知。new 送信済み event は deadline が
+    近づいても dispatch_deadlines で再送されない。
+    """
     eid = await _create_confirmed_event(db)
     notifier = FakeNotifier()
     disp = NotificationDispatcher(
@@ -413,16 +444,17 @@ async def test_dispatch_deadlines_fires_when_apply_end_near(db):
         max_per_run=10,
         max_per_day=150,
     )
-    # 先に new 通知を発火
+    # 1 回目: new が送られる
     await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
     assert len(notifier.sent) == 1
-    # apply_end_at を later の 2h後 に書き換え、later から 3h window 内で deadline 呼び出し
+    # 期限を 2h 後に短縮 → deadline 発火条件を満たす
     later = datetime(2026, 4, 21, 14, 0)
     await LotteryEventRepo(db).update(eid, apply_end_at=later + timedelta(hours=2))
+    # 旧 dispatch_deadlines 呼び出しは event-level gate で suppressed
     result = await disp.dispatch_deadlines(now=later)
-    assert result.update_sent == 1
-    deadline_msg = notifier.sent[-1]
-    assert "⏰" in deadline_msg and "締切" in deadline_msg
+    assert result.update_sent == 0
+    # LINE 総件数は変わらず 1 通
+    assert len(notifier.sent) == 1
 
 
 @pytest.mark.asyncio
@@ -444,9 +476,13 @@ async def test_dispatch_deadlines_skips_without_prior_new(db):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_deadlines_dedup_within_window(db):
-    """同一 event の deadline 通知は dedupe_key で 1 回だけ送信される。"""
+async def test_dispatch_urgent_event_single_notification_only(db):
+    """Event-centric: 期限迫る event で dispatch を繰り返し呼んでも LINE は 1 通のみ。
+    1 回目: deadline 型で送信、2 回目以降: event-level gate で suppress。
+    """
     eid = await _create_confirmed_event(db)
+    urgent_end = datetime(2026, 4, 21, 14, 0)
+    await LotteryEventRepo(db).update(eid, apply_end_at=urgent_end)
     notifier = FakeNotifier()
     disp = NotificationDispatcher(
         lottery_repo=LotteryEventRepo(db),
@@ -454,14 +490,13 @@ async def test_dispatch_deadlines_dedup_within_window(db):
         notification_repo=NotificationRepo(db),
         notifier=notifier,
     )
-    await disp.dispatch(now=datetime(2026, 4, 21, 12, 5))
-    later = datetime(2026, 4, 21, 14, 0)
-    await LotteryEventRepo(db).update(eid, apply_end_at=later + timedelta(hours=2))
-    r1 = await disp.dispatch_deadlines(now=later)
-    r2 = await disp.dispatch_deadlines(now=later + timedelta(minutes=30))
+    r1 = await disp.dispatch(now=datetime(2026, 4, 21, 12, 30))
+    r2 = await disp.dispatch(now=datetime(2026, 4, 21, 13, 0))
     assert r1.update_sent == 1
     assert r2.update_sent == 0
     assert r2.suppressed == 1
+    # LINE は 1 通のみ
+    assert len(notifier.sent) == 1
 
 
 def test_format_event_message_has_label():

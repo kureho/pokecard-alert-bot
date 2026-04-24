@@ -4,6 +4,7 @@ import pytest
 
 from pokebot.services.daily_summary import (
     DailySummaryService,
+    DeadlineSoonEntry,
     DigestEntry,
     SummarySnapshot,
     format_summary,
@@ -230,3 +231,81 @@ async def test_does_not_double_fire(db):
     # 同じ日に再呼び出し (5分後、まだ窓内)
     await svc.maybe_run(now=now + timedelta(minutes=5))
     assert len(notifier.sent) == 1
+
+
+# ===== deadline_soon セクション (event-centric 設計の deadline 個別通知廃止の代替) =====
+
+
+def test_format_summary_includes_deadline_section():
+    """deadline_soon が渡されると ⏰ セクションが表示される。"""
+    s = SummarySnapshot(
+        active_count=5,
+        notifications_today=1,
+        pending_review_count=0,
+        archived_count=0,
+        failing_sources=[],
+        new_active_last_24h=3,
+    )
+    deadline = [
+        DeadlineSoonEntry(
+            title="アビスアイ / エディオン",
+            retailer="edion",
+            store_name="エディオン",
+            apply_end_at=datetime(2026, 4, 24, 23, 59),
+        ),
+        DeadlineSoonEntry(
+            title="アビスアイ / TSUTAYA",
+            retailer="tsutaya",
+            store_name="TSUTAYA流山",
+            apply_end_at=datetime(2026, 4, 25, 10, 0),
+        ),
+    ]
+    text = format_summary(s, deadline_soon=deadline)
+    assert "⏰" in text
+    assert "締切24h以内" in text
+    assert "エディオン" in text
+    assert "4/24 23:59" in text
+
+
+def test_format_summary_no_deadline_section_when_empty():
+    """deadline_soon=None または空なら ⏰ セクション出さない。"""
+    s = SummarySnapshot(
+        active_count=5,
+        notifications_today=1,
+        pending_review_count=0,
+        archived_count=0,
+        failing_sources=[],
+        new_active_last_24h=3,
+    )
+    # deadline_soon 渡さない
+    text1 = format_summary(s)
+    assert "⏰" not in text1
+    # 空 list
+    text2 = format_summary(s, deadline_soon=[])
+    assert "⏰" not in text2
+
+
+def test_format_summary_deadline_limit_respected():
+    """deadline_limit で表示上限が効く。"""
+    s = SummarySnapshot(
+        active_count=20,
+        notifications_today=0,
+        pending_review_count=0,
+        archived_count=0,
+        failing_sources=[],
+        new_active_last_24h=20,
+    )
+    deadline = [
+        DeadlineSoonEntry(
+            title=f"商品{i}",
+            retailer="x",
+            store_name=f"store{i}",
+            apply_end_at=datetime(2026, 4, 24, 23, 59),
+        )
+        for i in range(15)
+    ]
+    text = format_summary(s, deadline_soon=deadline, deadline_limit=3)
+    # header に全件数は出るが、明細は 3 件だけ
+    assert "締切24h以内 (15件)" in text
+    count = sum(1 for line in text.split("\n") if "store" in line)
+    assert count == 3
