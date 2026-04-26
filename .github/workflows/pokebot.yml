@@ -3,11 +3,15 @@ name: pokebot
 on:
   schedule:
     # cron は UTC 基準 (env.TZ の影響を受けない)。毎時の分指定なので
-    # JST でも同じ間隔 = 30 分 / 15 分で安定発火する。
-    # Full lane (全 adapter): UTC 0,30 分。30 分間隔で network 全量スキャン。
-    - cron: "0,30 * * * *"
-    # Fast lane (公式 + 主要販路 entry_page のみ): UTC 15,45 分。速報性重視。
-    - cron: "15,45 * * * *"
+    # JST でも同じ間隔 = 1 時間で安定発火する。
+    # 2026-04-26 GitHub Actions 月次usage削減のため両 lane を 1 時間おきに変更
+    # (旧: Full 0,30 / Fast 15,45 → 月実行 2880 回。約 716 分消費)。
+    # 新: 月実行 1440 回 (-50%)、約 358 分予測。
+    # Full lane (全 adapter): UTC 0 分。1 時間間隔で network 全量スキャン。
+    - cron: "0 * * * *"
+    # Fast lane (公式 + 主要販路 entry_page のみ): UTC 30 分。
+    # Full との 30 分オフセットで速報性を維持 (LINE通知の最大遅延 30 分)。
+    - cron: "30 * * * *"
   workflow_dispatch:
     inputs:
       job:
@@ -65,13 +69,13 @@ jobs:
       - name: Determine job
         id: job
         # schedule 実行時は github.event.schedule で cron 式を判定。
-        # - "0,30 * * * *" → all (Full lane)
-        # - "15,45 * * * *" → fast (Fast lane)
+        # - "0 * * * *"  → all  (Full lane)
+        # - "30 * * * *" → fast (Fast lane)
         # workflow_dispatch 時は inputs.job を使う。
         run: |
           if [ -n "${{ inputs.job }}" ]; then
             echo "name=${{ inputs.job }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "15,45 * * * *" ]; then
+          elif [ "${{ github.event.schedule }}" = "30 * * * *" ]; then
             echo "name=fast" >> "$GITHUB_OUTPUT"
           else
             echo "name=all" >> "$GITHUB_OUTPUT"

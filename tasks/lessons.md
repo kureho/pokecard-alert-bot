@@ -89,3 +89,55 @@ content_version = event.last_seen_at.isoformat(timespec="minutes")
 - **抑止対象は全 LINE 通知** (new / update / deadline / daily_summary / silence)。一部だけ抑止すると「夜中に監視アラートで起きる」「早朝に daily summary で起きる」といった抜けが残る
 - **daily_summary の既定時刻を 10:00 に変更** (09:00 のままだと quiet hours 内で永久に発火しない)
 - **GHA TZ=Asia/Tokyo 前提**。hour 判定は naive datetime を使うので、TZ 設定が外れると境界がズレる。TZ=Asia/Tokyo が deploy ルール化されていることが前提
+
+## 2026-04-26 GitHub Actions usage 月次オーバーフロー対策（pokebot 側）
+
+### 何が起きたか
+- 2026-04-23 に Actions 月次無料枠（2000分）超過で全 repo 停止
+- 4月実測の真犯人は pokeprice (820分/42%) と pokecard-alert-bot (716分/37%) の 2 台体制
+- pokeprice は別途 cron 削減 push 済（commit `90d02a2`、月 820 → 約 360 分）
+- 5/1 自動リセット待ちの間に pokebot 側も削減して再発防止する
+
+### 削減前後の cron
+
+| lane | 旧 cron | 新 cron | 月実行回数 |
+|---|---|---|---:|
+| Full lane (全 21 adapter + body fetch) | `0,30 * * * *` | `0 * * * *` | 1440 → 720 |
+| Fast lane (公式 + 主要販路 entry_page) | `15,45 * * * *` | `30 * * * *` | 1440 → 720 |
+| 合計 | 30分間隔 | 60分間隔 (Full と Fast を 30分オフセット) | 2880 → 1440 (-50%) |
+
+### 実測値と予測
+
+- 直近 100 success run の平均所要時間: Full 5.88分 / Fast 5.62分（yaml コメントの「Fast 3分」は古い情報。adapter 増加で実態は両 lane ほぼ同じ）
+- 4月実測: 月 716 分
+- 5月予測: 約 358 分 (-50%)
+
+### 速報性低下の許容判断
+
+- 旧: Full と Fast が交互に 15 分ごとに走っていたので、新規告知の検知遅延は最大 15 分
+- 新: Full と Fast が交互に 30 分ごと → 新規告知の検知遅延は最大 30 分
+- LINE 通知頻度は `MAX_NOTIFY_PER_DAY=6` で別途制限されているため、削減で通知が減ることはあっても増えることはない
+- ユーザー判断 (kureho、2026-04-26): 案 A (両 lane 1 時間おき、30分オフセット) を採用
+
+### 検証手順 (今回実施したもの)
+
+1. `gh run list --status success --limit 100` で Full / Fast 別の所要時間を実測集計
+2. `gh workflow run pokebot.yml -f job=fast -f dry_run=true` で DRY_RUN 検証 → `notify_dispatch: new=0 update=0 suppressed=9` で LINE 送信抑止を確認 (`feedback_dryrun_before_external_push.md` 準拠)
+3. yaml の cron + Determine job ロジックの cron 文字列マッチを同時更新（cron 変更時の見落とし定番ポイント）
+4. 5/1 までは Actions 無料枠超過で schedule 発火しないため、最初の本番発火は 5/1 以降に観察する
+
+### ルール (再発防止)
+
+- **GitHub Actions の使用量は月単位で算定される。schedule 系 workflow を増やしたり cron 間隔を狭めたりするときは、月実行回数 × 1回あたりの分数 で 2000 分枠への影響を必ず試算する**
+- **cron 式を変更する時は、cron 行だけでなく、`github.event.schedule` で cron 文字列をマッチしている分岐ロジックも同時に更新する**（今回も Determine job の `if` を更新する必要があった）
+- **削減前に必ず Full / Fast 別の所要時間を実測する**。yaml コメントは作成時点の見積もりなので、半年以上経つと実態とずれる可能性が高い
+
+### 巻き戻し方法
+
+```bash
+cd ~/claude/pokecard-alert-bot
+git revert <commit-sha>
+git push origin main
+```
+
+cron 変更は次の schedule 発火タイミングまで猶予がある。Full lane なら最大 1 時間待てば次の発火を観察できる。
